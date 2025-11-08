@@ -98,15 +98,14 @@ timer_elapsed(int64_t then)
  * @param ticks 스레드가 **대기할 시간의 길이** (상대적인 타이머 틱 수).
  * (ticks가 0 이하일 경우, 함수는 즉시 반환됩니다.)
  */
-void timer_sleep(int64_t ticks)
-{
+void timer_sleep (int64_t ticks) {
 
-	if (ticks <= 0)
-	{
+
+	if (ticks <= 0) {
 		return;
 	}
 
-	int64_t start = timer_ticks();
+	int64_t start = timer_ticks ();
 	int64_t awake_tick = start + ticks;
 
 	thread_sleep(awake_tick);
@@ -145,13 +144,12 @@ void timer_print_stats(void)
  *
  * @param args UNUSED 인터럽트 발생 시의 CPU 레지스터 상태가 담긴 프레임 (여기서는 사용되지 않음).
  */
-static void timer_interrupt(struct intr_frame *args UNUSED)
-{
+static void timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 
-	thread_wake_up(ticks);
+	thread_wake_up(ticks); 
 
-	thread_tick();
+	thread_tick ();
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
