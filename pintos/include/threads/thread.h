@@ -98,6 +98,12 @@ struct thread {
 	// timer 기능
 	int64_t awake_tick;
 
+	// donate 기능
+	int base_priority;
+	struct list donations;
+	struct list_elem donation_elem;
+	struct lock *waiting_on; // 이 스레드가 락 반납하길 기다리는 스레드
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4;                     /* Page map level 4 */
@@ -152,4 +158,5 @@ void thread_sleep(int64_t awake_tick);
 void thread_wake_up(int64_t current_ticks);
 
 bool thread_priority_less(const struct list_elem *a,const struct list_elem *b, void *aux);
+void thread_preemption(void);
 #endif /* threads/thread.h */

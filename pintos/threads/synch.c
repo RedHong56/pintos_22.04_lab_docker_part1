@@ -106,18 +106,39 @@ sema_try_down (struct semaphore *sema) {
    This function may be called from an interrupt handler. */
 /* threads/synch.c */
 
-
-
 void
 sema_up (struct semaphore *sema) {
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
-   sema->value++;
-
+   
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),struct thread, elem));
+   sema->value++; // 임계 구역 안으로
+
+   if (!list_empty (&sema->waiters))
+   {
+      // 1. 첫 번째 녀석을 '최대'라고 가정 (리스트에 1개만 있어도 OK)
+      struct list_elem *max_elem = list_begin(&sema->waiters);
+      struct thread *max_thread = list_entry(max_elem, struct thread, elem);
+
+      // 2. (항목이 2개 이상이면) 두 번째부터 루프를 돈다
+      struct list_elem *e;
+      for (e = list_next(max_elem); e != list_end(&sema->waiters); e = list_next(e))
+      {
+         struct thread *t = list_entry(e, struct thread, elem);
+         if (t->priority > max_thread->priority) {
+               max_thread = t;
+               max_elem = e;
+         }
+      }
+      
+      // 3. (리스트에 1개만 있었다면 for문은 건너뛰고) 
+      //    '최대' 항목 (즉, 그 1개)을 제거하고 깨움
+      list_remove(max_elem);
+      thread_unblock(max_thread);
+   }
+   thread_preemption();
+
 	intr_set_level (old_level);
 }
 
@@ -187,14 +208,71 @@ lock_init (struct lock *lock) {
    interrupt handler.  This function may be called with
    interrupts disabled, but interrupts will be turned back on if
    we need to sleep. */
+
+void update_holder_priority(struct thread *holder){
+   int max_priority = holder->base_priority;
+   if (!list_empty(&holder->donations))
+   {
+      struct list_elem *front_elem = list_front(&holder->donations);
+      struct thread *highest_donor =  list_entry(front_elem, struct thread, donation_elem);
+
+      if (highest_donor->priority > max_priority){ //기증자중 가장 큰놈과 비교
+         max_priority = highest_donor->priority;
+      }
+   }
+   holder->priority = max_priority; // 최종 아웃풋
+}
+
+void remove_my_donation(struct lock *lock){
+   struct thread *holder = thread_current();
+   struct list *donations_list = &holder->donations;
+   struct list_elem *e=list_begin(donations_list); //순회 하기 위한 임시 포인터
+   while (e != list_end(donations_list))
+   {
+      struct thread *donor = list_entry(e, struct thread, donation_elem); // 그 순회하고 있는 이름표의 쓰레드
+      if (donor->waiting_on == lock)
+         e = list_remove(e);
+      else
+         e = list_next(e); // 다음 탐색
+   }
+}
+
+bool donate_priority_less (const struct list_elem *a,
+                   const struct list_elem *b, void *aux) {
+	struct thread *t_a = list_entry (a, struct thread, donation_elem);
+	struct thread *t_b = list_entry (b, struct thread, donation_elem);
+	return (t_a->priority > t_b->priority); 
+}
+
 void
 lock_acquire (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
-	
-   sema_down (&lock->semaphore);
-   lock->holder = thread_current ();   
+	enum intr_level old_level = intr_disable ();
+   
+   if (lock->holder != NULL) 
+   {
+      thread_current()->waiting_on = lock; // 어떤 락을 기다리는지
+      list_insert_ordered(&lock->holder->donations, &thread_current()->donation_elem, donate_priority_less, NULL); //holder 쓰레드의 대기열에 추가
+      // update_holder_priority(lock->holder); // holder의 우선 순위를 재계산 (기부)
+      struct thread *holder = lock->holder;
+      while (holder)
+      {
+         update_holder_priority(holder); // 홀더의 우선순위 계산
+         if (holder->waiting_on)
+            holder = holder->waiting_on->holder;
+         else
+            break; // 기다리는 락 없으면 전파 중지
+      }
+   }
+   sema_down(&lock->semaphore); // 대기 P 연산(While) 여기서는 sema->waiter에 대기열로 추가 elem으로
+   
+   // 획득 후
+   lock->holder = thread_current ();
+   thread_current()->waiting_on = NULL;
+
+   intr_set_level(old_level); // 임계 구역 종료
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -227,8 +305,15 @@ lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
 
-	lock->holder = NULL;
-	sema_up (&lock->semaphore);
+   enum intr_level old_level = intr_disable();
+   
+   remove_my_donation(lock); // 기부자 정리
+   update_holder_priority(lock->holder); // 우선순위 계산
+   
+	lock->holder = NULL; // 소유권 포기
+	sema_up (&lock->semaphore); // 다음 놈 깨우기
+   thread_preemption(); //sema up과 중복 일 수 있음
+   intr_set_level (old_level);
 }
 
 /* Returns true if the current thread holds LOCK, false
