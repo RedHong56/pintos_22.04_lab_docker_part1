@@ -99,6 +99,19 @@ struct thread
 	// timer 기능
 	int64_t awake_tick;
 
+	// 기부 전용 명찰
+	struct list_elem donation_elem;
+
+	// 기부자들
+	struct list donations;
+
+	// 원래 우선순위
+	int original_priority;
+
+	// 어떤 락을 기다리고있는지 처음에는 NULL
+	struct lock *waiting_on;
+
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */

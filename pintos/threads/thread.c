@@ -248,19 +248,16 @@ void thread_sleep(int64_t awake_tick)
 	// 인터럽트 끄기
 	enum intr_level old_level = intr_disable();
 
-
-
-
-	if (cur != idle_thread) {
-
-		cur->awake_tick = awake_tick;
+	ASSERT(thread_current != idle_thread);
+	 
+	cur->awake_tick = awake_tick;
 		
-		// 'Sleep 리스트'에 'thread_awake_less' 함수를 기준으로 '정렬 삽입'
-		list_insert_ordered(&sleep_list, &cur->elem, thread_awake_less, NULL);
+	// 'Sleep 리스트'에 'thread_awake_less' 함수를 기준으로 '정렬 삽입'
+	list_insert_ordered(&sleep_list, &cur->elem, thread_awake_less, NULL);
 
-		// 잠들기
-		thread_block();
-	}
+	// 잠들기
+	thread_block();
+	
 
 
 
@@ -445,18 +442,37 @@ void thread_yield(void)
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void thread_set_priority(int new_priority)
 {
-    thread_current()->priority = new_priority;
 
-    /* *  [선점 로직]
-     * ready_list가 비어있지 않은지 확인하고,
-     * 만약 ready_list의 맨 앞 스레드(가장 높은 우선순위의 대기자)보다
-     * 자신의 새 우선순위가 낮아졌다면, 즉시 CPU를 양보합니다.
-     */
+	// 무조건 우선순위 변경은 안된다.
+	// 어떻게 제약을 두어야할까?
+
+	// thread의 priority를 바꾸는게 아닌, threaed의 original_priority를 변경한다.
+    thread_current()->original_priority = new_priority;
+
+
+	//original_priority랑 donations의 맨앞 스레드의 우선순위랑 비교해서 더 큰 것으로 변경해야한다.
+	int max_priority = -1;
+	
+	if (!list_empty(&thread_current()->donations)) {
+		struct thread *front_thread = list_entry(list_begin(&thread_current()->donations), struct thread, donation_elem);
+		max_priority = front_thread->priority;
+	}
+
+	if (max_priority < thread_current()-> original_priority) {
+		max_priority = thread_current() -> original_priority;
+	}
+
+	thread_current() -> priority = max_priority;
+
+    //  [선점 로직]
+    //  ready_list가 비어있지 않은지 확인하고,
+    //  만약 ready_list의 맨 앞 스레드(가장 높은 우선순위의 대기자)보다
+    //  자신의 새 우선순위가 낮아졌다면, 즉시 CPU를 양보합니다.
     if (!list_empty(&ready_list)) 
     {
         struct thread *front_thread = list_entry(list_begin(&ready_list), struct thread, elem);
         
-        if (new_priority < front_thread->priority) {
+        if (thread_current()->priority < front_thread->priority) {
             thread_yield();
         }
     }
@@ -561,6 +577,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
 	t->awake_tick = 0;
+	t->original_priority = priority;
+	list_init(&t->donations);
+	t->waiting_on = NULL;     
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should
