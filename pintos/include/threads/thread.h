@@ -28,6 +28,11 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
 
+/* Thread nice values. in .h 파일*/
+#define NICE_MAX 20       /* MAX 20 (가장 '친절함'/낮은 우선순위) */
+#define NICE_DEFAULT 0    /* DEFAULT 0 (기본값) */
+#define NICE_MIN -20      /* MIN -20 (가장 '이기적'/높은 우선순위) */
+
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -96,6 +101,7 @@ struct thread
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem; /* List element. */
 
+	struct list_elem all_elem;
 	// timer 기능
 	int64_t awake_tick;
 
@@ -111,31 +117,40 @@ struct thread
 	// 어떤 락을 기다리고있는지 처음에는 NULL
 	struct lock *waiting_on;
 
+	//다른 스레드에게 얼마나 CPU를 "양보"할 것인지
+	int nice; 
 
-#ifdef USERPROG
+	//최근 CPU 사용량
+	int recent_cpu;
+	
+	#ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */
-#endif
-#ifdef VM
+	#endif
+	#ifdef VM
 	/* Table for whole virtual memory owned by thread. */
 	struct supplemental_page_table spt;
-#endif
-
+	#endif
+	
 	/* Owned by thread.c. */
 	struct intr_frame tf; /* Information for switching */
 	unsigned magic;		  /* Detects stack overflow. */
 };
 
 /* If false (default), use round-robin scheduler.
-   If true, use multi-level feedback queue scheduler.
-   Controlled by kernel command-line option "-o mlfqs". */
+If true, use multi-level feedback queue scheduler.
+Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
 
 void thread_init(void);
 void thread_start(void);
 
-void thread_tick(void);
+void thread_tick(int64_t ticks);
 void thread_print_stats(void);
+// MLFQS helper function
+void mlfqs_update_load_avg(void);
+void mlfqs_update_all_priority (void);
+void mlfqs_update_all_recent_cpu(void);
 
 typedef void thread_func(void *aux);
 tid_t thread_create(const char *name, int priority, thread_func *, void *);
@@ -170,6 +185,6 @@ void thread_check_sleepers(int64_t current_ticks);
 void thread_sleep(int64_t awake_tick);
 void thread_wake_up(int64_t current_ticks);
 int priority_less (const struct list_elem *a,
-                   const struct list_elem *b, void *aux); 
-
-#endif /* threads/thread.h */
+	const struct list_elem *b, void *aux); 
+	#endif /* threads/thread.h */
+	

@@ -224,13 +224,11 @@ void update_holder_priority(struct thread *holder) {
 		if (holder->waiting_on != NULL && holder->waiting_on->holder != NULL) {
 		update_holder_priority(holder->waiting_on->holder);
 		}
-
 	}
 	// 내가 기다리고 있는 락을 소유한 스레드가, 또 다른 락을 기다리고 있다면, 우선순위 기부는 연쇄적으로 발생해야한다.
 	//
 	//    H   ->    M     -> L
 	//   (cur)   (holder)
-
 }
 
 /* Acquires LOCK, sleeping until it becomes available if

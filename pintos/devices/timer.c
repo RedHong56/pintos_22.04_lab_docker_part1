@@ -7,6 +7,8 @@
 #include "threads/io.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/fixed-point.h"
+
 
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -144,13 +146,17 @@ void timer_print_stats(void)
  *
  * @param args UNUSED 인터럽트 발생 시의 CPU 레지스터 상태가 담긴 프레임 (여기서는 사용되지 않음).
  */
-static void timer_interrupt (struct intr_frame *args UNUSED) {
+static void timer_interrupt (struct intr_frame *args UNUSED) { //1초에 100번(매 틱) 호출
+	
 	ticks++;
-
 	thread_wake_up(ticks); 
+	thread_tick (ticks); // load, cpu_recent 계산
 
-	thread_tick ();
-
+		if (ticks % TIMER_FREQ == 0)
+	{
+		mlfqs_update_load_avg();
+		mlfqs_update_all_recent_cpu();
+	}
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
