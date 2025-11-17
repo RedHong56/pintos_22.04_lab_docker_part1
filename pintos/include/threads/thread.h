@@ -111,7 +111,8 @@ struct thread
 	// 어떤 락을 기다리고있는지 처음에는 NULL
 	struct lock *waiting_on;
 
-
+	// 부모에게 전달하는 신호
+	int exit_status;
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */

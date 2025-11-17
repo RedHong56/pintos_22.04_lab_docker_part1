@@ -580,7 +580,8 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->original_priority = priority;
 	list_init(&t->donations);
 	t->waiting_on = NULL;     
-	
+	t->exit_status = -1;
+
 	uint64_t *pml4 = NULL;
 }
 
