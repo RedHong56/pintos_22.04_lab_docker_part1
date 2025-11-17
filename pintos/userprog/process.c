@@ -28,6 +28,7 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 static struct semaphore sema;
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -222,11 +223,8 @@ process_wait (tid_t child_tid UNUSED) {
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
-	struct thread *curr = thread_current ();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
+	struct thread *curr = thread_current (); // 출력
+	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
 	sema_up(&sema);
 	process_cleanup ();
 }

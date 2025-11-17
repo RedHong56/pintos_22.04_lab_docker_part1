@@ -9,10 +9,30 @@
 #include "intrinsic.h"
 #include "userprog/process.h"
 #include <console.h>
+#include "threads/init.h" // exit
+//create / open
+#include "filesys/filesys.h"
+#include "user/syscall.h"
+
+
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
+void sys_halt (void);
+void sys_exit (int status);
+// tid_t sys_fork (const char *thread_name);
+int sys_exec (const char *file);
+int sys_wait (tid_t);
+bool sys_create (const char *file, unsigned initial_size);
+bool sys_remove (const char *file);
+int sys_open (const char *file);
+int sys_filesize (int fd);
+int sys_read (int fd, void *buffer, unsigned length);
+int sys_write (int fd, const void *buffer, unsigned length);
+void sys_seek (int fd, unsigned position);
+unsigned sys_tell (int fd);
+void sys_close (int fd);
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -47,7 +67,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	switch (syscall_num)
 	{
 	case SYS_EXIT:
-		exit(f->R.rdi);
+		sys_exit(f->R.rdi);
 		thread_exit ();
 		break;
 	case SYS_EXEC:
@@ -57,35 +77,36 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		// wait(f->R.rdi);
 		break;
 	case SYS_WRITE:
-		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
+		f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
-	// case SYS_HALT:
-	// 	halt();
+	case SYS_HALT:
+		sys_halt();
+		break;
+	case SYS_CREATE:
+		char *file_name = f->R.rdi;
+		unsigned size = f->R.rsi;
+		f->R.rax = sys_create(file_name, size);
+		break;
+	// case SYS_OPEN:
+	// 	sys_open();
 	// 	break;
 	// case SYS_FORK:
-	// 	fork();
-	// 	break;
-	// case SYS_CREATE:
-	// 	create();
-	// 	break;
-	// case SYS_OPEN:
-	// 	open();
+	// 	sys_fork();
 	// 	break;
 	// case SYS_FILESIZE:
-	// 	filefize();
+	// 	sys_filefize();
 	// 	break;
 	// case SYS_READ:
-	// 	read();
+	// 	sys_read();
 	// 	break;
-
 	// case SYS_SEEK:
-	// 	seek();
+	// 	sys_seek();
 	// 	break;
 	// case SYS_TELL:
-	// 	tell();
+	// 	sys_tell();
 	// 	break;
 	// case SYS_CLOSE:
-	// 	close();
+	// 	sys_close();
 	// 	break;
 	default:
 		break;
@@ -93,8 +114,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// printf ("system call!\n");
 	// printf ("%d", syscall_num);
 }
-void exit (int status){ //이거 중복 선언임
-	printf ("%s: exit(%d)\n", thread_name(),status);
+void sys_exit (int status){ //이거 중복 선언임
+	thread_current()->exit_status = status;
+	// process_exit();
 	thread_exit();
 }
 
@@ -106,7 +128,7 @@ int sys_exec (const char *file){
 		return -1;
 }
 
-int write (int fd, const void *buffer, unsigned length){
+int sys_write (int fd, const void *buffer, unsigned length){
 	if (fd == 1)
 	{
 		if (buffer !=NULL)
@@ -117,19 +139,28 @@ int write (int fd, const void *buffer, unsigned length){
 	}
 	return -1;
 }
-// int wait (pid_t){
+void sys_halt (void){
+	power_off(); //init.h
+}
+
+bool sys_create (const char *file, unsigned initial_size){
+	if (!is_user_vaddr(file)) //file == NULL || 
+		sys_exit(-1);
+	if (pml4_get_page(thread_current()->pml4, file) == NULL)
+		sys_exit(-1);
+	
+	return filesys_create(file, initial_size);
+}
+// int sys_wait (pid_t){
 
 // }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// void halt (void) NO_RETURN;
-// pid_t fork (const char *thread_name);
-// int wait (pid_t);
-// bool create (const char *file, unsigned initial_size);
-// bool remove (const char *file);
-// int open (const char *file);
-// int filesize (int fd);
-// int read (int fd, void *buffer, unsigned length);
-// void seek (int fd, unsigned position);
-// unsigned tell (int fd);
-// void close (int fd);
+// pid_t sys_fork (const char *thread_name);
+// bool sys_remove (const char *file);
+// int sys_open (const char *file);
+// int sys_filesize (int fd);
+// int sys_read (int fd, void *buffer, unsigned length);
+// void sys_seek (int fd, unsigned position);
+// unsigned sys_tell (int fd);
+// void sys_close (int fd);
