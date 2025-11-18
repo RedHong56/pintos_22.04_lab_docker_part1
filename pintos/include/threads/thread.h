@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "threads/interrupt.h"
+#include <stdlib.h>
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -20,6 +21,7 @@ enum thread_status
 
 /* Thread identifier type.
    You can redefine this to whatever type you like. */
+struct file;
 typedef int tid_t;
 #define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 
@@ -113,6 +115,11 @@ struct thread
 
 	// 부모에게 전달하는 신호
 	int exit_status;
+
+	// fd_set / open 용으로 만들어두기
+	
+	struct file *fd_set[128];
+
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
 	uint64_t *pml4; /* Page map level 4 */

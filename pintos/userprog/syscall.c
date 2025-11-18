@@ -12,9 +12,10 @@
 #include "threads/init.h" // exit
 //create / open
 #include "filesys/filesys.h"
+#include "filesys/file.h"
 #include "user/syscall.h"
 
-
+#include "threads/synch.h" 
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -33,6 +34,7 @@ int sys_write (int fd, const void *buffer, unsigned length);
 void sys_seek (int fd, unsigned position);
 unsigned sys_tell (int fd);
 void sys_close (int fd);
+
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -82,14 +84,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_HALT:
 		sys_halt();
 		break;
-	case SYS_CREATE:
+	case SYS_CREATE:{
 		char *file_name = f->R.rdi;
 		unsigned size = f->R.rsi;
 		f->R.rax = sys_create(file_name, size);
 		break;
-	// case SYS_OPEN:
-	// 	sys_open();
-	// 	break;
+	}
+	case SYS_OPEN:{
+		char *file_name = (const char *)f->R.rdi;
+		f->R.rax = sys_open(file_name);
+		break;
+	}
 	// case SYS_FORK:
 	// 	sys_fork();
 	// 	break;
@@ -114,12 +119,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// printf ("system call!\n");
 	// printf ("%d", syscall_num);
 }
+/////////////////////////////////////EXIT////////////////////////////////////////////
 void sys_exit (int status){ //이거 중복 선언임
 	thread_current()->exit_status = status;
 	// process_exit();
 	thread_exit();
 }
-
+/////////////////////////////////////EXEC////////////////////////////////////////////
 int sys_exec (const char *file){
 	// 이 함수를 호출한 스레드 이름 변경 X , FD는 호출 후에도 열려 있음
 	//file -> 실행 cmdlineputbuf()
@@ -127,7 +133,7 @@ int sys_exec (const char *file){
 	if (file == NULL)
 		return -1;
 }
-
+/////////////////////////////////////WRITE////////////////////////////////////////////
 int sys_write (int fd, const void *buffer, unsigned length){
 	if (fd == 1)
 	{
@@ -139,26 +145,60 @@ int sys_write (int fd, const void *buffer, unsigned length){
 	}
 	return -1;
 }
+/////////////////////////////////////HALT////////////////////////////////////////////
 void sys_halt (void){
 	power_off(); //init.h
 }
-
+/////////////////////////////////////CREATE////////////////////////////////////////////
 bool sys_create (const char *file, unsigned initial_size){
-	if (!is_user_vaddr(file)) //file == NULL || 
+	if (file == NULL ||  !is_user_vaddr(file))
 		sys_exit(-1);
 	if (pml4_get_page(thread_current()->pml4, file) == NULL)
 		sys_exit(-1);
-	
-	return filesys_create(file, initial_size);
+	bool success = filesys_create(file, initial_size); //Inode(명세서)와 Data Block(데이터 공간)할당
+	return success; 
 }
+/////////////////////////////////////OPEN////////////////////////////////////////////
+int sys_open (const char *file){
+
+	if (file == NULL ||  !is_user_vaddr(file) || pml4_get_page(thread_current()->pml4, file) == NULL) // bad_ptr
+		sys_exit(-1);
+
+	if (*file == "") // empty 
+		return -1;
+	
+	struct thread *t = thread_current();
+	struct file *file_st = filesys_open(file); // file 이름에 맞는 inode를 dir에서 찾아줌
+	
+	if (file_st == NULL) // 만약 파일이 존재하지않으면
+		return -1;
+	
+	// bad_ptr
+
+	int fd = -1;
+
+	for (int i = 2; i < 128; i++)
+	{
+		if (t->fd_set[i] == NULL)
+		{
+			t->fd_set[i] = file_st;
+			fd = i;
+			break; // twice
+		}
+	}
+	file_close(file_st);
+	// sys_exit(0);
+	return fd;
+}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // int sys_wait (pid_t){
 
 // }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // pid_t sys_fork (const char *thread_name);
 // bool sys_remove (const char *file);
-// int sys_open (const char *file);
+
 // int sys_filesize (int fd);
 // int sys_read (int fd, void *buffer, unsigned length);
 // void sys_seek (int fd, unsigned position);
