@@ -78,40 +78,49 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_WAIT:
 		// wait(f->R.rdi);
 		break;
-	case SYS_WRITE:
-		f->R.rax = sys_write(f->R.rdi, f->R.rsi, f->R.rdx);
-		break;
-	case SYS_HALT:
+		case SYS_HALT:
 		sys_halt();
 		break;
-	case SYS_CREATE:{
-		char *file_name = f->R.rdi;
-		unsigned size = f->R.rsi;
-		f->R.rax = sys_create(file_name, size);
-		break;
-	}
-	case SYS_OPEN:{
-		char *file_name = (const char *)f->R.rdi;
-		f->R.rax = sys_open(file_name);
-		break;
-	}
+		case SYS_CREATE:{
+			char *file_name = f->R.rdi;
+			unsigned size = f->R.rsi;
+			f->R.rax = sys_create(file_name, size);
+			break;
+		}
+		case SYS_OPEN:{
+			char *file_name = (const char *)f->R.rdi;
+			f->R.rax = sys_open(file_name);
+			break;
+		}
+		case SYS_CLOSE:
+			int fd = f->R.rdi;
+			sys_close(fd);
+			break;
+		case SYS_READ:{
+			int fd = f->R.rdi;
+			void *buffer = f->R.rsi;
+			unsigned length = f->R.rdx;
+			sys_read(fd, buffer, length);
+			break;
+		}
+		case SYS_WRITE:{
+			int fd = f->R.rdi;
+			const void *buffer = f->R.rsi;
+			unsigned length = f->R.rdx;			
+			f->R.rax = sys_write(fd, buffer, length);
+			break;
+		}
 	// case SYS_FORK:
 	// 	sys_fork();
 	// 	break;
 	// case SYS_FILESIZE:
 	// 	sys_filefize();
 	// 	break;
-	// case SYS_READ:
-	// 	sys_read();
-	// 	break;
 	// case SYS_SEEK:
 	// 	sys_seek();
 	// 	break;
 	// case SYS_TELL:
 	// 	sys_tell();
-	// 	break;
-	// case SYS_CLOSE:
-	// 	sys_close();
 	// 	break;
 	default:
 		break;
@@ -172,12 +181,10 @@ int sys_open (const char *file){
 	
 	if (file_st == NULL) // 만약 파일이 존재하지않으면
 		return -1;
-	
-	// bad_ptr
 
 	int fd = -1;
 
-	for (int i = 2; i < 128; i++)
+	for (int i = 2; i < 64; i++)
 	{
 		if (t->fd_set[i] == NULL)
 		{
@@ -187,10 +194,39 @@ int sys_open (const char *file){
 		}
 	}
 	file_close(file_st);
-	// sys_exit(0);
 	return fd;
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////CLOSE////////////////////////////////////////////
+void sys_close (int fd){
+	//fd 탐색
+	if (fd<0 || 64<fd || fd == NULL)
+		return;	
+	struct file *close_fd = thread_current()->fd_set[fd];
+	if (close_fd == NULL || !is_user_vaddr(close_fd)){ // 이게 kick 임
+		return;
+	}
+	file_close(close_fd);
+	close_fd = NULL;
+}
+
+// void sys_close (int fd) {
+//     // 1. 범위 검사 (0: stdin, 1: stdout은 닫지 않도록 2부터 시작)
+//     if (fd < 2 || fd > 127) { 
+//         return;
+//     }
+//     struct thread *curr = thread_current();
+//     struct file *close_fd = curr->fd_set[fd];
+//     if (close_fd == NULL) {
+//         return;
+//     }
+//     file_close(close_fd);
+//     curr->fd_set[fd] = NULL; 
+// }
+
+//////////////////////////////////////READ///////////////////////////////////////////////
+int sys_read (int fd, void *buffer, unsigned length){
+	
+}
 
 // int sys_wait (pid_t){
 
@@ -200,7 +236,7 @@ int sys_open (const char *file){
 // bool sys_remove (const char *file);
 
 // int sys_filesize (int fd);
-// int sys_read (int fd, void *buffer, unsigned length);
+
 // void sys_seek (int fd, unsigned position);
 // unsigned sys_tell (int fd);
-// void sys_close (int fd);
+
