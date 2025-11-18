@@ -581,6 +581,11 @@ init_thread(struct thread *t, const char *name, int priority)
 	list_init(&t->donations);
 	t->waiting_on = NULL;     
 	t->exit_status = -1;
+	for (int i = 0; i < 128; i++)
+	{
+		t->fd_set[i] = NULL;
+	}
+	
 
 	uint64_t *pml4 = NULL;
 }

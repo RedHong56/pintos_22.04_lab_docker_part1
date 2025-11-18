@@ -55,7 +55,7 @@ process_create_initd (const char *file_name) {
 
 	sema_init(&sema, 0);
 	// parsing
-	char fn_cpcp[128];
+	char fn_cpcp[64];
 	strlcpy(fn_cpcp,file_name, sizeof(fn_cpcp));
 	char *bookmarker;
 	char *program_name = strtok_r(fn_cpcp, " ", &bookmarker);
@@ -64,7 +64,9 @@ process_create_initd (const char *file_name) {
 	tid = thread_create (program_name, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
+	
 	return tid;
+	
 } 
 
 /* A thread function that launches first user process. */
@@ -340,10 +342,10 @@ load (const char *fn, struct intr_frame *if_) {
 	int i;
 
 	//////////////////////////Implement argument passing////////////////////////////
-	char fn_copy[128], *file_name;
+	char fn_copy[64], *file_name;
 	strlcpy(fn_copy, fn, sizeof(fn_copy));
 	char *bookmark;
-	char *argv_token[128];
+	char *argv_token[64];
 
 	// 첫번째 토큰과 인덱스
 	char *token = strtok_r(fn_copy, " ", &bookmark); 
@@ -448,7 +450,7 @@ load (const char *fn, struct intr_frame *if_) {
 	////////////////////////////////////Push Stack///////////////////////////////////
 
 	// word DATA PUSH
-	char *argv_addr[128]; //
+	char *argv_addr[64]; //
 	for (i = argc -1; i >= 0; i--){
 
 		if_->rsp -= strlen(argv_token[i]) + 1;
