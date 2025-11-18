@@ -118,7 +118,7 @@ struct thread
 
 	// fd_set / open 용으로 만들어두기
 	
-	struct file *fd_set[128];
+	struct file *fd_set[64];
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
