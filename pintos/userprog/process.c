@@ -19,6 +19,9 @@
 #include "threads/vaddr.h"
 #include "intrinsic.h"
 #include "threads/synch.h"
+#include "filesys/file.h"
+
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -87,9 +90,8 @@ initd (void *f_name) {
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
-	/* Clone current thread to new thread.*/
-	return thread_create (name,
-			PRI_DEFAULT, __do_fork, thread_current ());
+	
+	return thread_create (name, PRI_DEFAULT, __do_fork, thread_current ());
 }
 
 #ifndef VM
@@ -104,16 +106,31 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	// <Pseudo Code>
+	//	if(parent->page == base_pml4){
+	//		return;
+	//} 
+	
+	
+	if (is_kernel_vaddr(va))
+		return;
 
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
 
 	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
 	 *    TODO: NEWPAGE. */
+		// <Pseudo Code>
+		// palloc() 함수 사용
+		// uint8_t *newpage = palloc_get_page (PAL_USER);
+
 
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
+	// <Pseudo Code>
+	// 
+
 
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
@@ -155,18 +172,22 @@ __do_fork (void *aux) {
 		goto error;
 #endif
 
-	/* TODO: Your code goes here.
-	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
-	 * TODO:       in include/filesys/file.h. Note that parent should not return
-	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
+	// File Object duplicate 
+	// 
+	// for(int i = 0; i< 64; i++){
+	// 	current->fd_set[i] = file_duplicate(parent->fd_set[i]);
+	// }
 
-	process_init ();
+	
 
+	// 부모가 자식의 wait list로 가서
+	process_init (); // 자식이 취침할때 부모 깨우기
+	
 	/* Finally, switch to the newly created process. */
 	if (succ)
 		do_iret (&if_);
 error:
+	// sema up
 	thread_exit ();
 }
 
@@ -228,7 +249,7 @@ process_exit (void) {
 	struct thread *curr = thread_current (); // 출력
 	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
 	sema_up(&sema);
-	for (int i = 0; i < 64; i++)
+	for (int i = 0; i < FDT_SIZE; i++)
 	{
 		if (curr->fd_set[i] != NULL)
 		{
@@ -236,6 +257,9 @@ process_exit (void) {
 			curr->fd_set[i] = NULL;
 		}
 	}
+	palloc_free_page(curr->fd_set);
+	curr->fd_set = NULL;
+
 	process_cleanup ();
 }
 

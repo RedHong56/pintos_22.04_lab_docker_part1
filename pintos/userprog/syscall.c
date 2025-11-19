@@ -47,7 +47,7 @@ void sys_close (int fd);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
-static struct lock sys_lock;
+struct lock sys_lock;
 
 void
 syscall_init (void) {
@@ -122,9 +122,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = sys_filesize (fd); 
 		break;
 	}
-	// case SYS_FORK:
-	// 	sys_fork();
-	// 	break;
+	case SYS_FORK:{
+		char *thread_name = f->R.rdi;
+		f->R.rax = sys_fork(thread_name);
+		break;
+	}
 	// case SYS_SEEK:
 	// 	sys_seek();
 	// 	break;
@@ -226,13 +228,14 @@ int sys_open (const char *file){
 	}
 	
 	struct thread *t = thread_current();
+
 	lock_acquire(&sys_lock);
 	struct file *file_st = filesys_open(file); // file 이름에 맞는 inode를 dir에서 찾아줌
 	lock_release(&sys_lock);
 	if (file_st == NULL) // 만약 파일이 존재하지않으면
 		return -1;
 
-	for (int fd = 2; fd < 64; fd++){
+	for (int fd = 2; fd < FDT_SIZE; fd++){
 		if (t->fd_set[fd] == NULL){
 			t->fd_set[fd] = file_st;
 			return fd;
@@ -280,17 +283,17 @@ int sys_read (int fd, void *buffer, unsigned length){
 		return length;
 	}
 
-	struct file *readed_file_name = thread_current()->fd_set[fd];
-	if (readed_file_name == NULL)
+	struct file *read_file_name = thread_current()->fd_set[fd];
+	if (read_file_name == NULL)
 		return -1;
 
 	lock_acquire(&sys_lock);
-	int buf_length = file_read(readed_file_name, buffer, length);
+	int buf_length = file_read(read_file_name, buffer, length);
 	lock_release(&sys_lock);
 
 	return buf_length;
 }
-
+//////////////////////////////////////FILE SIZE/////////////////////////////////////////////
 int sys_filesize (int fd){
 	if (fd< 1 || 63 < fd)
 		return -1;
@@ -298,18 +301,27 @@ int sys_filesize (int fd){
 	struct file *file_name = thread_current()->fd_set[fd];
 	if (file_name == NULL)
 		return -1;
-	return(file_length(file_name));
+
+	int file_size = file_length(file_name); // 이거 수정
+	return file_size;
 }
-// int sys_wait (pid_t){
 
-// }
+pid_t sys_fork (const char *thread_name){
+	struct intr_frame f;
+	f = thread_current()->tf;
+	process_fork(thread_name, &f);
+	
+	// 전달된 pte_for_each_func(가상 주소 참조)에서 누락된 부분을 채워야 함
+	// 자기 새끼는 0 리턴
+	// 부모는 자식 새끼 pid 리턴
+	// 부모 프로세스는 자식 프로세스가 성공적으로 복제되었는지 확인할 때까지 포크에서 반환해서는 안 됩니다. 
+	//리소스 복제에 실패하면 부모 프로세스의 fork() 호출은 TID_ERROR를 반환
+	
+}
 
-// pid_t sys_fork (const char *thread_name){
 
-//}
+// int sys_wait (pid_t){}
 // bool sys_remove (const char *file);
-
-
 // void sys_seek (int fd, unsigned position);
 // unsigned sys_tell (int fd);
 

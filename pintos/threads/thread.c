@@ -197,6 +197,14 @@ tid_t thread_create(const char *name, int priority,
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
 
+	//동적 할당
+	t->fd_set = palloc_get_page(PAL_ZERO);
+
+	if (t->fd_set == NULL)
+	{
+		palloc_free_page(t); // 실패하면 스레드 메모리도 반납
+		return TID_ERROR;
+	}
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t)kernel_thread;
@@ -581,12 +589,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	list_init(&t->donations);
 	t->waiting_on = NULL;     
 	t->exit_status = -1;
-	for (int i = 0; i < 64; i++)
-	{
-		t->fd_set[i] = NULL;
-	}
-	
 
+	t->fd_set = NULL;
+	
 	uint64_t *pml4 = NULL;
 }
 
