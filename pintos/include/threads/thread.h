@@ -30,6 +30,8 @@ typedef int tid_t;
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63	   /* Highest priority. */
 
+
+#define FDT_SIZE 128 // 동적 할당
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The
@@ -119,7 +121,7 @@ struct thread
 
 	// fd_set / open 용으로 만들어두기
 	
-	struct file *fd_set[64];
+	struct file **fd_set;
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
