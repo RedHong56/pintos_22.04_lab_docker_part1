@@ -235,9 +235,7 @@ process_exit (void) {
 			file_close(curr->fd_set[i]); 
 			curr->fd_set[i] = NULL;
 		}
-		
 	}
-	
 	process_cleanup ();
 }
 

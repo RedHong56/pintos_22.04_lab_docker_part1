@@ -107,7 +107,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		int fd = f->R.rdi;
 		void *buffer = f->R.rsi;
 		unsigned length = f->R.rdx;
-		sys_read(fd, buffer, length);
+		f->R.rax = sys_read(fd, buffer, length);
 		break;
 	}
 	case SYS_WRITE:{
@@ -117,11 +117,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = sys_write(fd, buffer, length);
 		break;
 	}
+	case SYS_FILESIZE:{
+		int fd = f->R.rdi;
+		f->R.rax = sys_filesize (fd); 
+		break;
+	}
 	// case SYS_FORK:
 	// 	sys_fork();
-	// 	break;
-	// case SYS_FILESIZE:
-	// 	sys_filefize();
 	// 	break;
 	// case SYS_SEEK:
 	// 	sys_seek();
@@ -174,15 +176,30 @@ int sys_exec (const char *file){
 }
 /////////////////////////////////////WRITE////////////////////////////////////////////
 int sys_write (int fd, const void *buffer, unsigned length){
-	if (fd == 1)
-	{
+
+	check_address(buffer);
+
+	if (fd<1 || fd > 63)
+		return -1;
+	
+	if (fd == 1){
 		if (buffer !=NULL)
 		{
 			putbuf(buffer, length);
 			return length;
 		}
+		return -1;
 	}
-	return -1;
+
+	struct file *file_name = thread_current()->fd_set[fd];
+	if (file_name == NULL)
+		return -1;
+
+	lock_acquire(&sys_lock);
+	int ret_length = file_write(file_name, buffer, length);
+	lock_release(&sys_lock);
+
+	return ret_length;
 }
 /////////////////////////////////////HALT////////////////////////////////////////////
 void sys_halt (void){
@@ -190,10 +207,13 @@ void sys_halt (void){
 }
 /////////////////////////////////////CREATE////////////////////////////////////////////
 bool sys_create (const char *file, unsigned initial_size){
+
 	check_address(file);
 	check_valid_string(file);
 
+	lock_acquire(&sys_lock);
 	bool success = filesys_create(file, initial_size); //Inode(명세서)와 Data Block(데이터 공간)할당
+	lock_release(&sys_lock);
 	return success; 
 }
 /////////////////////////////////////OPEN////////////////////////////////////////////
@@ -222,6 +242,7 @@ int sys_open (const char *file){
 
 	return -1;
 }
+
 /////////////////////////////////////CLOSE////////////////////////////////////////////
 void sys_close (int fd){
 	if (fd<2 || 63<fd){
@@ -238,20 +259,56 @@ void sys_close (int fd){
 
 	thread_current()->fd_set[fd] = NULL;
 }
-
 //////////////////////////////////////READ///////////////////////////////////////////////
 int sys_read (int fd, void *buffer, unsigned length){
+	if( fd<0 || fd > 63 || fd == 1 || buffer == NULL)
+		return -1;
 	
+	check_address(buffer); // 주소확인하고
+	if(length >0)
+		check_address(buffer + length -1); // 끝 주소 확인
+	
+	if (fd == 0){ //keybord 입력 값 읽기
+		uint8_t *buf = (uint8_t *)buffer;
+		
+		for (unsigned i = 0; i < length; i++){
+			buf[i] = input_getc();
+
+			if (buf[i] == NULL)
+				return i+1;
+		}
+		return length;
+	}
+
+	struct file *readed_file_name = thread_current()->fd_set[fd];
+	if (readed_file_name == NULL)
+		return -1;
+
+	lock_acquire(&sys_lock);
+	int buf_length = file_read(readed_file_name, buffer, length);
+	lock_release(&sys_lock);
+
+	return buf_length;
 }
 
+int sys_filesize (int fd){
+	if (fd< 1 || 63 < fd)
+		return -1;
+	
+	struct file *file_name = thread_current()->fd_set[fd];
+	if (file_name == NULL)
+		return -1;
+	return(file_length(file_name));
+}
 // int sys_wait (pid_t){
 
 // }
 
-// pid_t sys_fork (const char *thread_name);
+// pid_t sys_fork (const char *thread_name){
+
+//}
 // bool sys_remove (const char *file);
 
-// int sys_filesize (int fd);
 
 // void sys_seek (int fd, unsigned position);
 // unsigned sys_tell (int fd);
