@@ -228,6 +228,16 @@ process_exit (void) {
 	struct thread *curr = thread_current (); // 출력
 	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
 	sema_up(&sema);
+	for (int i = 0; i < 64; i++)
+	{
+		if (curr->fd_set[i] != NULL)
+		{
+			file_close(curr->fd_set[i]); 
+			curr->fd_set[i] = NULL;
+		}
+		
+	}
+	
 	process_cleanup ();
 }
 

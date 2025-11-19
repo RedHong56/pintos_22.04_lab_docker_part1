@@ -14,7 +14,6 @@
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 #include "user/syscall.h"
-
 #include "threads/synch.h" 
 
 void syscall_entry (void);
@@ -48,8 +47,13 @@ void sys_close (int fd);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+static struct lock sys_lock;
+
 void
 syscall_init (void) {
+
+	lock_init(&sys_lock);
+
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
 			((uint64_t)SEL_KCSEG) << 32);
 	write_msr(MSR_LSTAR, (uint64_t) syscall_entry);
@@ -61,6 +65,7 @@ syscall_init (void) {
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
 }
 
+
 /* The main system call interface */
 void
 syscall_handler (struct intr_frame *f UNUSED) {
@@ -70,46 +75,48 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	{
 	case SYS_EXIT:
 		sys_exit(f->R.rdi);
-		thread_exit ();
 		break;
 	case SYS_EXEC:
 		sys_exec(f->R.rdi);
 		break;
-	case SYS_WAIT:
+	case SYS_WAIT:{
 		// wait(f->R.rdi);
 		break;
-		case SYS_HALT:
+	}
+	case SYS_HALT:{
 		sys_halt();
 		break;
-		case SYS_CREATE:{
-			char *file_name = f->R.rdi;
-			unsigned size = f->R.rsi;
-			f->R.rax = sys_create(file_name, size);
-			break;
-		}
-		case SYS_OPEN:{
-			char *file_name = (const char *)f->R.rdi;
-			f->R.rax = sys_open(file_name);
-			break;
-		}
-		case SYS_CLOSE:
-			int fd = f->R.rdi;
-			sys_close(fd);
-			break;
-		case SYS_READ:{
-			int fd = f->R.rdi;
-			void *buffer = f->R.rsi;
-			unsigned length = f->R.rdx;
-			sys_read(fd, buffer, length);
-			break;
-		}
-		case SYS_WRITE:{
-			int fd = f->R.rdi;
-			const void *buffer = f->R.rsi;
-			unsigned length = f->R.rdx;			
-			f->R.rax = sys_write(fd, buffer, length);
-			break;
-		}
+	}
+	case SYS_CREATE:{
+		char *file_name = f->R.rdi;
+		unsigned size = f->R.rsi;
+		f->R.rax = sys_create(file_name, size);
+		break;
+	}
+	case SYS_OPEN:{
+		char *file_name = (const char *)f->R.rdi;
+		f->R.rax = sys_open(file_name);
+		break;
+	}
+	case SYS_CLOSE:{
+		int fd = f->R.rdi;
+		sys_close(fd);
+		break;
+	}
+	case SYS_READ:{
+		int fd = f->R.rdi;
+		void *buffer = f->R.rsi;
+		unsigned length = f->R.rdx;
+		sys_read(fd, buffer, length);
+		break;
+	}
+	case SYS_WRITE:{
+		int fd = f->R.rdi;
+		const void *buffer = f->R.rsi;
+		unsigned length = f->R.rdx;			
+		f->R.rax = sys_write(fd, buffer, length);
+		break;
+	}
 	// case SYS_FORK:
 	// 	sys_fork();
 	// 	break;
@@ -128,10 +135,33 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	// printf ("system call!\n");
 	// printf ("%d", syscall_num);
 }
+////////////////////////////////////HELP///////////////////////////////////////////
+void check_address(const uint64_t *address){
+	struct thread *curr = thread_current();
+	// 주소가 null 인지, 유저 영역인지, 실제 pm에 매핑되어 있는지
+	if ( address == NULL || !is_user_vaddr(address) || pml4_get_page(thread_current()->pml4, address) == NULL) 
+		sys_exit(-1);
+}
+
+void check_valid_string(const char *str) {
+
+	check_address((void *)str); // 시작 주소 검사
+
+    char *ptr = (char *)str;
+    while (true) {
+
+        check_address((void *)ptr);
+
+        if (*ptr == '\0') {
+            return;
+        }
+        ptr++;
+	}
+}
+
 /////////////////////////////////////EXIT////////////////////////////////////////////
 void sys_exit (int status){ //이거 중복 선언임
 	thread_current()->exit_status = status;
-	// process_exit();
 	thread_exit();
 }
 /////////////////////////////////////EXEC////////////////////////////////////////////
@@ -160,68 +190,54 @@ void sys_halt (void){
 }
 /////////////////////////////////////CREATE////////////////////////////////////////////
 bool sys_create (const char *file, unsigned initial_size){
-	if (file == NULL ||  !is_user_vaddr(file))
-		sys_exit(-1);
-	if (pml4_get_page(thread_current()->pml4, file) == NULL)
-		sys_exit(-1);
+	check_address(file);
+	check_valid_string(file);
+
 	bool success = filesys_create(file, initial_size); //Inode(명세서)와 Data Block(데이터 공간)할당
 	return success; 
 }
 /////////////////////////////////////OPEN////////////////////////////////////////////
 int sys_open (const char *file){
 
-	if (file == NULL ||  !is_user_vaddr(file) || pml4_get_page(thread_current()->pml4, file) == NULL) // bad_ptr
-		sys_exit(-1);
+	check_address(file);
 
-	if (*file == "") // empty 
+	if (*file == ""){ // empty 
 		return -1;
+	}
 	
 	struct thread *t = thread_current();
+	lock_acquire(&sys_lock);
 	struct file *file_st = filesys_open(file); // file 이름에 맞는 inode를 dir에서 찾아줌
-	
+	lock_release(&sys_lock);
 	if (file_st == NULL) // 만약 파일이 존재하지않으면
 		return -1;
 
-	int fd = -1;
-
-	for (int i = 2; i < 64; i++)
-	{
-		if (t->fd_set[i] == NULL)
-		{
-			t->fd_set[i] = file_st;
-			fd = i;
-			break; // twice
+	for (int fd = 2; fd < 64; fd++){
+		if (t->fd_set[fd] == NULL){
+			t->fd_set[fd] = file_st;
+			return fd;
 		}
 	}
 	file_close(file_st);
-	return fd;
+
+	return -1;
 }
 /////////////////////////////////////CLOSE////////////////////////////////////////////
 void sys_close (int fd){
-	//fd 탐색
-	if (fd<0 || 64<fd || fd == NULL)
-		return;	
+	if (fd<2 || 63<fd){
+		sys_exit(-1);
+	}
 	struct file *close_fd = thread_current()->fd_set[fd];
-	if (close_fd == NULL || !is_user_vaddr(close_fd)){ // 이게 kick 임
+
+	if (close_fd == NULL){ // 이게 kick 임
 		return;
 	}
+	lock_acquire(&sys_lock);
 	file_close(close_fd);
-	close_fd = NULL;
-}
+	lock_release(&sys_lock);
 
-// void sys_close (int fd) {
-//     // 1. 범위 검사 (0: stdin, 1: stdout은 닫지 않도록 2부터 시작)
-//     if (fd < 2 || fd > 127) { 
-//         return;
-//     }
-//     struct thread *curr = thread_current();
-//     struct file *close_fd = curr->fd_set[fd];
-//     if (close_fd == NULL) {
-//         return;
-//     }
-//     file_close(close_fd);
-//     curr->fd_set[fd] = NULL; 
-// }
+	thread_current()->fd_set[fd] = NULL;
+}
 
 //////////////////////////////////////READ///////////////////////////////////////////////
 int sys_read (int fd, void *buffer, unsigned length){
