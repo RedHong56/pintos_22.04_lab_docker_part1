@@ -57,8 +57,9 @@ process_create_initd (const char *file_name) {
 	strlcpy (fn_copy, file_name, PGSIZE);
 
 	sema_init(&sema, 0);
+	
 	// parsing
-	char fn_cpcp[64];
+	char fn_cpcp[128];
 	strlcpy(fn_cpcp,file_name, sizeof(fn_cpcp));
 	char *bookmarker;
 	char *program_name = strtok_r(fn_cpcp, " ", &bookmarker);
@@ -85,20 +86,48 @@ initd (void *f_name) {
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
+struct 
+thread *get_child_process(tid_t pid){
+
+	struct thread *curr = thread_current();
+	struct list *child_list = &curr->child_list;
+	struct list_elem *e;
+	for (e = list_begin(child_list); e != list_end(child_list); e = list_next(e))
+	{
+		struct thread *t = list_entry(e, struct thread, child_elem);
+		if (t->tid == pid)
+			return t;
+	}
+	return NULL;
+}
+
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
-	
-	return thread_create (name, PRI_DEFAULT, __do_fork, thread_current ());
+	thread_current()->parent_fork_if = *if_; // infr save
+
+	tid_t pid = thread_create (name, PRI_DEFAULT, __do_fork, thread_current ()); // 자식 낳기
+
+	struct thread *child = get_child_process(pid);
+	if (child == NULL){
+		return TID_ERROR;
+	}
+
+	sema_down(&child->fork_sema);
+	if (child->exit_status == TID_ERROR){
+		return TID_ERROR;
+	}
+
+	return pid;
 }
 
 #ifndef VM
 /* Duplicate the parent's address space by passing this function to the
  * pml4_for_each. This is only for the project 2. */
 static bool
-duplicate_pte (uint64_t *pte, void *va, void *aux) {
+duplicate_pte (uint64_t *pte, void *va, void *aux) { // pte = 부모 엔트리 , va = 부모 페이지의 시작 주소, 부모 쓰레드 
 	struct thread *current = thread_current ();
 	struct thread *parent = (struct thread *) aux;
 	void *parent_page;
@@ -106,36 +135,29 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	bool writable;
 
 	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
-	// <Pseudo Code>
-	//	if(parent->page == base_pml4){
-	//		return;
-	//} 
-	
-	
 	if (is_kernel_vaddr(va))
-		return;
+		return true;
 
 	/* 2. Resolve VA from the parent's page map level 4. */
 	parent_page = pml4_get_page (parent->pml4, va);
 
-	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
-	 *    TODO: NEWPAGE. */
-		// <Pseudo Code>
-		// palloc() 함수 사용
-		// uint8_t *newpage = palloc_get_page (PAL_USER);
-
-
+	/* 3. TODO: Allocate new PAL_USER page for the child and set result to NEWPAGE. */
+	newpage = palloc_get_page (PAL_USER);
+	if (newpage == NULL)
+		return false;
+	
 	/* 4. TODO: Duplicate parent's page to the new page and
 	 *    TODO: check whether parent's page is writable or not (set WRITABLE
 	 *    TODO: according to the result). */
-	// <Pseudo Code>
-	// 
-
-
+	memcpy(newpage, parent_page, PGSIZE);
+	writable = is_writable(pte);
+		
 	/* 5. Add new page to child's page table at address VA with WRITABLE
 	 *    permission. */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
 		/* 6. TODO: if fail to insert page, do error handling. */
+		palloc_free_page(newpage);
+		return false; // 이거 킥임
 	}
 	return true;
 }
@@ -150,8 +172,13 @@ __do_fork (void *aux) {
 	struct intr_frame if_;
 	struct thread *parent = (struct thread *) aux;
 	struct thread *current = thread_current ();
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
+	 
 	struct intr_frame *parent_if;
+
+	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) *
+	// fork 이전의 부모 레지스터 값 저장 해야함 , 쓰레드 구조체 안에 */
+	parent_if = &parent->parent_fork_if;
+
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
@@ -173,19 +200,25 @@ __do_fork (void *aux) {
 #endif
 
 	// File Object duplicate 
-	// 
-	// for(int i = 0; i< 64; i++){
-	// 	current->fd_set[i] = file_duplicate(parent->fd_set[i]);
-	// }
+	for(int i = 0; i< FDT_SIZE; i++){
+		if (current->fd_set[i] != NULL)
+		{
+			current->fd_set[i] = file_duplicate(parent->fd_set[i]);
+		}else{
+			current->fd_set[i] = NULL;
+		}
+	}
 
-	
-
-	// 부모가 자식의 wait list로 가서
-	process_init (); // 자식이 취침할때 부모 깨우기
-	
+	/* TODO : parent는 이 함수가 성공적으로 복제될 때까지 fork()에서 반환해서는 안 됩니다 */
+	// * TODO: parent의 리소스를 반환해야 합니다.*/
+	process_init (); 
+	if_.R.rax = 0;
 	/* Finally, switch to the newly created process. */
+	sema_up(&current->fork_sema); // 자식의 wait list -> 부모 깨우기
+	
+	// 유저 모드
 	if (succ)
-		do_iret (&if_);
+		do_iret (&if_); 
 error:
 	// sema up
 	thread_exit ();
@@ -237,9 +270,8 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	
 	sema_down(&sema);
-	
-	
 	return -1;
 }
 
@@ -372,14 +404,25 @@ load (const char *fn, struct intr_frame *if_) {
 	off_t file_ofs;
 	bool success = false;
 	int i;
+	// char *argv_token[64]; //문자열 복사 하는 곳
+	// char *argv_addr[64]; // word DATA PUSH
+
+	//힙에서 4KB 페이지
+	uint64_t *page_for_argv = palloc_get_page(PAL_ZERO);
+	if (page_for_argv == NULL) return false; // 메모리 부족 예외 처리
+
+	// 그 페이지를 쪼개서 씁니다. (캐스팅 활용)
+	char **argv_token = (char **) page_for_argv;
+	char **argv_addr = (char **) (page_for_argv + FDT_SIZE); // 128칸 뒤부터 사용
+
 
 	//////////////////////////Implement argument passing////////////////////////////
 	char fn_copy[64], *file_name;
 	strlcpy(fn_copy, fn, sizeof(fn_copy));
-	char *bookmark;
-	char *argv_token[64];
+	
 
 	// 첫번째 토큰과 인덱스
+	char *bookmark;
 	char *token = strtok_r(fn_copy, " ", &bookmark); 
 	argv_token[0] = token;
 
@@ -480,9 +523,6 @@ load (const char *fn, struct intr_frame *if_) {
 	if_->rip = ehdr.e_entry;
 
 	////////////////////////////////////Push Stack///////////////////////////////////
-
-	// word DATA PUSH
-	char *argv_addr[64]; //
 	for (i = argc -1; i >= 0; i--){
 
 		if_->rsp -= strlen(argv_token[i]) + 1;
@@ -517,10 +557,14 @@ load (const char *fn, struct intr_frame *if_) {
 	*(uint64_t *)if_->rsp = 0;
 
 	////////////////////////////////////Push Stack///////////////////////////////////
+
 	success = true;
 
 done:
 	/* We arrive here whether the load is successful or not. */
+	if (page_for_argv != NULL)
+        palloc_free_page(page_for_argv);
+
 	file_close (file);
 	return success;
 }

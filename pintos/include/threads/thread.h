@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "threads/interrupt.h"
 #include <stdlib.h>
+#include "threads/synch.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -89,7 +90,9 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
+// struct fork_info{
 
+// }
 struct thread
 {
 	/* Owned by thread.c. */
@@ -115,13 +118,22 @@ struct thread
 
 	// 어떤 락을 기다리고있는지 처음에는 NULL
 	struct lock *waiting_on;
-
+	//////////////////////////////////////////////////////////////////////////////
 	// 부모에게 전달하는 신호
-	int exit_status;
+	int exit_status; 
 
 	// fd_set / open 용으로 만들어두기
-	
 	struct file **fd_set;
+
+	// 이건 따로 구조체에서 선언
+	struct intr_frame parent_fork_if; // 부모 fork intr
+	struct semaphore fork_sema;// fork 할 때 wait 장치
+	
+	// child
+	struct list child_list;
+	struct list_elem child_elem;
+	
+
 
 #ifdef USERPROG
 	/* Owned by userprog/process.c. */
