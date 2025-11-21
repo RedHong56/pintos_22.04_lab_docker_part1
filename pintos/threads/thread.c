@@ -117,8 +117,11 @@ void thread_init(void)
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread();
 	init_thread(initial_thread, "main", PRI_DEFAULT);
+
+	
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid();
+
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -196,7 +199,8 @@ tid_t thread_create(const char *name, int priority,
 	/* Initialize thread. */
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
-
+	list_push_back(&thread_current()->child_list , &t->child_elem );
+	
 	//동적 할당
 	t->fd_set = palloc_get_page(PAL_ZERO);
 
@@ -205,6 +209,7 @@ tid_t thread_create(const char *name, int priority,
 		palloc_free_page(t); // 실패하면 스레드 메모리도 반납
 		return TID_ERROR;
 	}
+
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */
 	t->tf.rip = (uintptr_t)kernel_thread;
@@ -215,7 +220,7 @@ tid_t thread_create(const char *name, int priority,
 	t->tf.ss = SEL_KDSEG;
 	t->tf.cs = SEL_KCSEG;
 	t->tf.eflags = FLAG_IF;
-
+	
 	/* Add to run queue. */
 	thread_unblock(t);
 
@@ -590,9 +595,11 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->waiting_on = NULL;     
 	t->exit_status = -1;
 
-	t->fd_set = NULL;
-	
+	list_init(&t->child_list);
+	sema_init(&t->fork_sema, 0);
 	uint64_t *pml4 = NULL;
+
+	t->fd_set = NULL;
 }
 
 /* Chooses and returns the next thread to be scheduled.  Should

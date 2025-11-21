@@ -15,13 +15,14 @@
 #include "filesys/file.h"
 #include "user/syscall.h"
 #include "threads/synch.h" 
+#include "threads/palloc.h" 
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 
 void sys_halt (void);
 void sys_exit (int status);
-// tid_t sys_fork (const char *thread_name);
+tid_t sys_fork (const char *thread_name, struct intr_frame *f);
 int sys_exec (const char *file);
 int sys_wait (tid_t);
 bool sys_create (const char *file, unsigned initial_size);
@@ -76,13 +77,6 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_EXIT:
 		sys_exit(f->R.rdi);
 		break;
-	case SYS_EXEC:
-		sys_exec(f->R.rdi);
-		break;
-	case SYS_WAIT:{
-		// wait(f->R.rdi);
-		break;
-	}
 	case SYS_HALT:{
 		sys_halt();
 		break;
@@ -124,9 +118,17 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	}
 	case SYS_FORK:{
 		char *thread_name = f->R.rdi;
-		f->R.rax = sys_fork(thread_name);
+		f->R.rax = sys_fork(thread_name, f);
 		break;
 	}
+	// case SYS_WAIT:{
+	// 	pid_t *thread_name = f->R.rdi;
+	// 	f->R.rax = sys_wait(thread_name);
+	// 	break;
+	// }
+	case SYS_EXEC:
+		f->R.rax = sys_exec(f->R.rdi);
+		break;
 	// case SYS_SEEK:
 	// 	sys_seek();
 	// 	break;
@@ -143,8 +145,10 @@ syscall_handler (struct intr_frame *f UNUSED) {
 void check_address(const uint64_t *address){
 	struct thread *curr = thread_current();
 	// 주소가 null 인지, 유저 영역인지, 실제 pm에 매핑되어 있는지
-	if ( address == NULL || !is_user_vaddr(address) || pml4_get_page(thread_current()->pml4, address) == NULL) 
+	if ( address == NULL || !is_user_vaddr(address) || pml4_get_page(thread_current()->pml4, address) == NULL) {
 		sys_exit(-1);
+		
+	}
 }
 
 void check_valid_string(const char *str) {
@@ -168,14 +172,7 @@ void sys_exit (int status){ //이거 중복 선언임
 	thread_current()->exit_status = status;
 	thread_exit();
 }
-/////////////////////////////////////EXEC////////////////////////////////////////////
-int sys_exec (const char *file){
-	// 이 함수를 호출한 스레드 이름 변경 X , FD는 호출 후에도 열려 있음
-	//file -> 실행 cmdlineputbuf()
-	//return 성공시 반환 X , 다른 경우 -1
-	if (file == NULL)
-		return -1;
-}
+
 /////////////////////////////////////WRITE////////////////////////////////////////////
 int sys_write (int fd, const void *buffer, unsigned length){
 
@@ -306,21 +303,36 @@ int sys_filesize (int fd){
 	return file_size;
 }
 
-pid_t sys_fork (const char *thread_name){
-	struct intr_frame f;
-	f = thread_current()->tf;
-	process_fork(thread_name, &f);
+pid_t sys_fork (const char *thread_name, struct intr_frame *f) {
+    return process_fork(thread_name, f);
+}
+/////////////////////////////////////EXEC////////////////////////////////////////////
+int sys_exec (const char *file){
+	// 이 함수를 호출한 스레드 이름 변경 X , FD는 호출 후에도 열려 있음
+	//file -> 실행 cmdline - putbuf()
+	//return 성공시 반환 X , 다른 경우 -1
+	check_address(file);
+
+	char *file_name;
+	file_name = palloc_get_page(PAL_ZERO);
+	if (file_name == NULL)
+		return -1;
 	
-	// 전달된 pte_for_each_func(가상 주소 참조)에서 누락된 부분을 채워야 함
-	// 자기 새끼는 0 리턴
-	// 부모는 자식 새끼 pid 리턴
-	// 부모 프로세스는 자식 프로세스가 성공적으로 복제되었는지 확인할 때까지 포크에서 반환해서는 안 됩니다. 
-	//리소스 복제에 실패하면 부모 프로세스의 fork() 호출은 TID_ERROR를 반환
-	
+	strlcpy (file_name, file, PGSIZE); //dest , source, size
+
+	if (process_exec(file_name) == -1) // -1 리턴하면 fail
+	{
+		palloc_free_page(file_name);
+		return -1;
+	}
 }
 
+// int sys_wait (pid_t){
+// 	process_wait()
+	
+// }
 
-// int sys_wait (pid_t){}
+
 // bool sys_remove (const char *file);
 // void sys_seek (int fd, unsigned position);
 // unsigned sys_tell (int fd);
