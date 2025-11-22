@@ -189,20 +189,7 @@ tid_t thread_create(const char *name, int priority,
 	struct thread *t;
 	tid_t tid;
 	ASSERT(function != NULL);
-		
-	// 자식 정보를 담을 구조체 할당
-	struct child_info *info = palloc_get_page(PAL_ZERO);
-	if (info == NULL) return TID_ERROR; // 할당 실패시
-
-	// info 초기화
-	info->parent = thread_current();
-	info->exit_status = -1;
-
-	sema_init(&info->load_sema, 0);
-	sema_init(&info->wait_sema, 0);
-
-	list_push_back(&thread_current()->child_list, &t->st_child_info->child_elem); // 자식 리스트 추가
-
+	
 	/* Allocate thread. */
 	t = palloc_get_page(PAL_ZERO);
 	if (t == NULL)
