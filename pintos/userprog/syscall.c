@@ -77,26 +77,31 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_EXIT:
 		sys_exit(f->R.rdi);
 		break;
+
 	case SYS_HALT:{
 		sys_halt();
 		break;
 	}
+
 	case SYS_CREATE:{
 		char *file_name = f->R.rdi;
 		unsigned size = f->R.rsi;
 		f->R.rax = sys_create(file_name, size);
 		break;
 	}
+
 	case SYS_OPEN:{
 		char *file_name = (const char *)f->R.rdi;
 		f->R.rax = sys_open(file_name);
 		break;
 	}
+
 	case SYS_CLOSE:{
 		int fd = f->R.rdi;
 		sys_close(fd);
 		break;
 	}
+
 	case SYS_READ:{
 		int fd = f->R.rdi;
 		void *buffer = f->R.rsi;
@@ -104,6 +109,7 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = sys_read(fd, buffer, length);
 		break;
 	}
+
 	case SYS_WRITE:{
 		int fd = f->R.rdi;
 		const void *buffer = f->R.rsi;
@@ -111,24 +117,28 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = sys_write(fd, buffer, length);
 		break;
 	}
+
 	case SYS_FILESIZE:{
 		int fd = f->R.rdi;
 		f->R.rax = sys_filesize (fd); 
 		break;
 	}
+
 	case SYS_FORK:{
 		char *thread_name = f->R.rdi;
 		f->R.rax = sys_fork(thread_name, f);
 		break;
 	}
-	// case SYS_WAIT:{
-	// 	pid_t *thread_name = f->R.rdi;
-	// 	f->R.rax = sys_wait(thread_name);
-	// 	break;
-	// }
-	case SYS_EXEC:
+
+	case SYS_EXEC:{
 		f->R.rax = sys_exec(f->R.rdi);
 		break;
+	}	
+	case SYS_WAIT:{
+		pid_t pid = f->R.rdi;
+		f->R.rax = sys_wait(thread_name); 
+		break;
+	}
 	// case SYS_SEEK:
 	// 	sys_seek();
 	// 	break;
@@ -147,7 +157,6 @@ void check_address(const uint64_t *address){
 	// 주소가 null 인지, 유저 영역인지, 실제 pm에 매핑되어 있는지
 	if ( address == NULL || !is_user_vaddr(address) || pml4_get_page(thread_current()->pml4, address) == NULL) {
 		sys_exit(-1);
-		
 	}
 }
 
@@ -302,35 +311,46 @@ int sys_filesize (int fd){
 	int file_size = file_length(file_name); // 이거 수정
 	return file_size;
 }
-
+///////////////////////////////////FORK//////////////////////////////////////////////
 pid_t sys_fork (const char *thread_name, struct intr_frame *f) {
     return process_fork(thread_name, f);
 }
 /////////////////////////////////////EXEC////////////////////////////////////////////
 int sys_exec (const char *file){
-	// 이 함수를 호출한 스레드 이름 변경 X , FD는 호출 후에도 열려 있음
-	//file -> 실행 cmdline - putbuf()
 	//return 성공시 반환 X , 다른 경우 -1
 	check_address(file);
 
+	// strlcpy (file_name, file, PGSIZE); //dest , source, size
 	char *file_name;
 	file_name = palloc_get_page(PAL_ZERO);
 	if (file_name == NULL)
 		return -1;
 	
-	strlcpy (file_name, file, PGSIZE); //dest , source, size
-
-	if (process_exec(file_name) == -1) // -1 리턴하면 fail
-	{
+	bool success = false;
+	for (int i = 0; i < PGSIZE; i++){
+		check_address(file + i); // 주소 확인 후
+		file_name[i] = file[i]; // 안전하면 복사
+		if (file[i] == '\0'){
+			success = true;
+			break;
+		}
+	}
+	
+	if (!success){ // 리턴하면 복사 실패
 		palloc_free_page(file_name);
 		return -1;
 	}
-}
+	if (process_exec(file_name) == -1) // process_exec 호출 후 free
+		return -1;
 
-// int sys_wait (pid_t){
-// 	process_wait()
-	
-// }
+	NOT_REACHED();
+}
+//////////////////////////////////WAIT//////////////////////////////////////////
+int sys_wait (pid_t pid){
+	int child_pid;
+	child_pid = process_wait(pid);
+	return child_pid;
+}
 
 
 // bool sys_remove (const char *file);

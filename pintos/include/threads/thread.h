@@ -90,9 +90,17 @@ typedef int tid_t;
  * only because they are mutually exclusive: only a thread in the
  * ready state is on the run queue, whereas only a thread in the
  * blocked state is on a semaphore wait list. */
-// struct fork_info{
+struct child_info{
+	tid_t child_pid; // 이 info가 누구의 것인가
+	int exit_status; // 자식의 최종 종료 코드 - 유언장
+	struct semaphore wait_sema; //유언장 준비 신호등
+	struct list_elem child_elem;
+    
+    struct thread *parent;      // 부모 스레드 포인터
+    struct intr_frame parent_if; // 부모로부터 복사된 인터럽트 프레임 (유저 컨텍스트)
+    struct semaphore load_sema; // 자식의 복제 완료를 부모가 기다리는 세마포어
+};
 
-// }
 struct thread
 {
 	/* Owned by thread.c. */
@@ -119,19 +127,23 @@ struct thread
 	// 어떤 락을 기다리고있는지 처음에는 NULL
 	struct lock *waiting_on;
 	//////////////////////////////////////////////////////////////////////////////
-	// 부모에게 전달하는 신호
-	int exit_status; 
+	// 실행중인 파일
+	struct file *running_file;
 
 	// fd_set / open 용으로 만들어두기
 	struct file **fd_set;
-
-	// 이건 따로 구조체에서 선언
-	struct intr_frame parent_fork_if; // 부모 fork intr
-	struct semaphore fork_sema;// fork 할 때 wait 장치
 	
 	// child
 	struct list child_list;
-	struct list_elem child_elem;
+
+	// fork 전 부모 상태 전달용
+	struct intr_frame parent_fork_if;
+
+	//종료 상태
+	int exit_status;
+
+	//child_struct
+	struct child_info *st_child_info;
 	
 
 
