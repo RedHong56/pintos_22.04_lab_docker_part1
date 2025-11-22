@@ -99,6 +99,7 @@ struct child_info{
     struct thread *parent;      // 부모 스레드 포인터
     struct intr_frame parent_if; // 부모로부터 복사된 인터럽트 프레임 (유저 컨텍스트)
     struct semaphore load_sema; // 자식의 복제 완료를 부모가 기다리는 세마포어
+	bool success;
 };
 
 struct thread
