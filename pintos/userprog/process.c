@@ -30,13 +30,11 @@ static void process_cleanup (void);
 static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
-static struct semaphore sema;
 
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
-	sema_down(thread_current());
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -55,8 +53,6 @@ process_create_initd (const char *file_name) {
 	if (fn_copy == NULL)
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
-
-	sema_init(&sema, 0);
 	
 	// parsing
 	char fn_cpcp[128];
@@ -86,41 +82,47 @@ initd (void *f_name) {
 		PANIC("Fail to launch initd\n");
 	NOT_REACHED ();
 }
-struct 
-thread *get_child_process(tid_t pid){
-
-	struct thread *curr = thread_current();
-	struct list *child_list = &curr->child_list;
-	struct list_elem *e;
-	for (e = list_begin(child_list); e != list_end(child_list); e = list_next(e))
-	{
-		struct thread *t = list_entry(e, struct thread, child_elem);
-		if (t->tid == pid)
-			return t;
-	}
-	return NULL;
-}
 
 
 /* Clones the current process as `name`. Returns the new process's thread id, or
  * TID_ERROR if the thread cannot be created. */
 tid_t
 process_fork (const char *name, struct intr_frame *if_ UNUSED) {
-	thread_current()->parent_fork_if = *if_; // infr save
 
-	tid_t pid = thread_create (name, PRI_DEFAULT, __do_fork, thread_current ()); // 자식 낳기
 
-	struct thread *child = get_child_process(pid);
-	if (child == NULL){
+	// 자식 정보를 담을 구조체 할당
+	struct child_info *info = palloc_get_page(PAL_ZERO);
+	if (info == NULL) return TID_ERROR; // 할당 실패시
+
+	// info 초기화
+	info->parent = thread_current();
+	info->exit_status = -1;
+	info->parent_if =  *if_; // infr save
+	sema_init(&info->load_sema, 0);
+	sema_init(&info->wait_sema, 0);
+
+	// 자식 낳기
+	tid_t pid = thread_create (name, PRI_DEFAULT, __do_fork, (void *)info);
+
+	// 생성 실패 예외 처리
+	if (pid == TID_ERROR) { // thread_create 실패
+		list_remove(&info->child_elem); // 리스트에서 제거
+        palloc_free_page(info);         // 메모리 해제
 		return TID_ERROR;
 	}
 
-	sema_down(&child->fork_sema);
-	if (child->exit_status == TID_ERROR){
+	// 자식 로드 대기 (info 의 세마포어)
+	sema_down(&info->load_sema);
+
+	if (info->exit_status == TID_ERROR){
 		return TID_ERROR;
 	}
-
 	return pid;
+	// 이건 구조체 이전의 더미들
+		// struct thread *child = get_child_process(pid);
+		// if (child == NULL){
+		// 	return TID_ERROR;
+		// }
 }
 
 #ifndef VM
@@ -169,20 +171,23 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) { // pte = 부모 엔트리 ,
  *       this function. */
 static void
 __do_fork (void *aux) {
-	struct intr_frame if_;
-	struct thread *parent = (struct thread *) aux;
 	struct thread *current = thread_current ();
-	 
-	struct intr_frame *parent_if;
+	struct child_info *info = (struct child_info*) aux;
+	
+	struct thread *parent = info->parent;
+	struct intr_frame *parent_if = &info->parent_if;
+	struct intr_frame if_;
+	bool succ = true;
+	
+	// info 연결
+	current->st_child_info = info;
 
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) *
 	// fork 이전의 부모 레지스터 값 저장 해야함 , 쓰레드 구조체 안에 */
-	parent_if = &parent->parent_fork_if;
-
-	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
 	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	if_.R.rax = 0; // 자식 확정 됐으니 0 설정
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -211,16 +216,16 @@ __do_fork (void *aux) {
 
 	/* TODO : parent는 이 함수가 성공적으로 복제될 때까지 fork()에서 반환해서는 안 됩니다 */
 	// * TODO: parent의 리소스를 반환해야 합니다.*/
-	process_init (); 
-	if_.R.rax = 0;
+	// process_init (); 
 	/* Finally, switch to the newly created process. */
-	sema_up(&current->fork_sema); // 자식의 wait list -> 부모 깨우기
+	sema_up(&info->load_sema); // 자식의 wait list -> 부모 깨우기
 	
 	// 유저 모드
-	if (succ)
-		do_iret (&if_); 
+	// if (succ)
+	do_iret (&if_); 
 error:
-	// sema up
+	info->exit_status = TID_ERROR; // 잘못됨을 알리고
+	sema_up(&info->load_sema); // 자식의 wait list -> 부모 깨우기 
 	thread_exit ();
 }
 
@@ -229,22 +234,19 @@ error:
 int
 process_exec (void *f_name) {
 	char *file_name = f_name;
-	bool success;
-
+	bool success = false;
 	/* We cannot use the intr_frame in the thread structure.
 	 * This is because when current thread rescheduled,
 	 * it stores the execution information to the member. */
+
 	struct intr_frame _if;
 	_if.ds = _if.es = _if.ss = SEL_UDSEG;
 	_if.cs = SEL_UCSEG;
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
-	/* We first kill the current context */
-	process_cleanup ();
-
 	/* And then load the binary */
 	success = load (file_name, &_if);
-
+	
 	/* If load failed, quit. */
 	palloc_free_page (file_name);
 	if (!success)
@@ -267,31 +269,68 @@ process_exec (void *f_name) {
  * does nothing. */
 int
 process_wait (tid_t child_tid UNUSED) {
-	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
-	 * XXX:       to add infinite loop here before
-	 * XXX:       implementing the process_wait. */
-	
-	sema_down(&sema);
-	return -1;
+	// 못찾으면 -1 임
+	int ret = -1;
+
+    struct thread *curr = thread_current();
+    struct list_elem *e;
+
+	// 어떤 자식의 info 인가?
+	printf("%d %d",list_begin(&curr->child_list),list_end(&curr->child_list));
+
+    for (e = list_begin(&curr->child_list); e != list_end(&curr->child_list); e = list_next(e)) {
+        struct child_info *info = list_entry(e, struct child_info, child_elem);
+        
+        if (info->child_pid == child_tid) { // 내 장부에 적힌 녀석인가?
+			// 잠들기
+			sema_down(&info->wait_sema);
+			
+			// 죽은 자식의 유언 확인
+			ret = info->exit_status;
+
+			// 깨고 나서 정리하는
+			list_remove(&info->child_elem);
+			palloc_free_page(info);
+            return ret;
+        }
+    }
+	return ret;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
 	struct thread *curr = thread_current (); // 출력
-	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
-	sema_up(&sema);
-	for (int i = 0; i < FDT_SIZE; i++)
-	{
-		if (curr->fd_set[i] != NULL)
-		{
-			file_close(curr->fd_set[i]); 
-			curr->fd_set[i] = NULL;
-		}
-	}
-	palloc_free_page(curr->fd_set);
-	curr->fd_set = NULL;
 
+	// FDT 정리
+	if (curr->fd_set != NULL)
+	{		
+		for (int i = 0; i < FDT_SIZE; i++)
+		{
+			if (curr->fd_set[i] != NULL){
+				file_close(curr->fd_set[i]); 
+				curr->fd_set[i] = NULL;
+			}
+		}
+		palloc_free_page(curr->fd_set);
+		curr->fd_set = NULL;
+	}
+	
+	// 실행 중인 파일 닫기 -> 쓰기 상태 해제
+	if (curr->running_file != NULL) {
+		file_close(curr->running_file);
+		curr->running_file = NULL;
+    }
+
+	// 유언 남기기
+	if (curr->st_child_info != NULL){
+		curr->st_child_info->exit_status = curr->exit_status; // 유언
+		sema_up(&curr->st_child_info->wait_sema); // 부모 깨우기 -> process_wait 하고 있는 부모 깨우기
+	}
+
+	// 로그 출력
+	printf ("%s: exit(%d)\n", thread_name(), curr->st_child_info->exit_status);
+	// 가상 메모리 및 PT 정리
 	process_cleanup ();
 }
 
@@ -415,7 +454,6 @@ load (const char *fn, struct intr_frame *if_) {
 	char **argv_token = (char **) page_for_argv;
 	char **argv_addr = (char **) (page_for_argv + FDT_SIZE); // 128칸 뒤부터 사용
 
-
 	//////////////////////////Implement argument passing////////////////////////////
 	char fn_copy[64], *file_name;
 	strlcpy(fn_copy, fn, sizeof(fn_copy));
@@ -436,19 +474,20 @@ load (const char *fn, struct intr_frame *if_) {
 	}
 	file_name = argv_token[0];
 	//////////////////////////Implement argument passing////////////////////////////
-
-	/* Allocate and activate page directory. */
-	t->pml4 = pml4_create ();
-	if (t->pml4 == NULL)
-		goto done;
-	process_activate (thread_current ());
-
 	/* Open executable file. */
 	file = filesys_open (file_name);
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
+	/* We first kill the current context */
+	process_cleanup ();
+
+	/* Allocate and activate page directory. */	t->pml4 = pml4_create ();
+	if (t->pml4 == NULL)
+		goto done;
+	process_activate (thread_current ());
+
 
 	/* Read and verify executable header. */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
