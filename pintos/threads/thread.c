@@ -592,7 +592,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->waiting_on = NULL;     
 	/////////////////////////////////////////
 	t->running_file = NULL;
-	t->exit_status = 0;
+	t->exit_status = -1;
 	list_init(&t->child_list);
 	t->st_child_info = NULL;
 	t->fd_set = NULL; // file
