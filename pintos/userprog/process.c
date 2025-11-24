@@ -37,6 +37,9 @@ struct initd_args {
     struct child_info *info;
 };
 
+extern struct lock filesys_lock;
+
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -317,38 +320,30 @@ process_exec (void *f_name) {
  *
  * This function will be implemented in problem 2-2.  For now, it
  * does nothing. */
-int
+int 
 process_wait (tid_t child_tid UNUSED) {
-	// 못찾으면 -1 임
-	int ret = -1;
-
     struct thread *curr = thread_current();
     struct list_elem *e;
+    struct child_info *found_info = NULL;
 
-	// 어떤 자식의 info 인가?
-	// printf("%d %d",list_begin(&curr->child_list),list_end(&curr->child_list));
-	struct child_info *info = NULL;
     for (e = list_begin(&curr->child_list); e != list_end(&curr->child_list); e = list_next(e)) {
-		info = list_entry(e, struct child_info, child_elem);
-        
-        if (info->child_pid == child_tid) { // 내 장부에 적힌 녀석인가?
-			// 잠들기
-			// 죽은 자식의 유언 확인
-			break;
+        struct child_info *tmp = list_entry(e, struct child_info, child_elem);
+        if (tmp->child_pid == child_tid) { 
+            found_info = tmp;
+            break;
         }
     }
-	
-	if (info == NULL){
-		return -1;
-	}
-	sema_down(&info->wait_sema);
-	ret = info->exit_status;
+    if (found_info == NULL) {
+        return -1;
+    }
 
-
-	// 깨고 나서 정리하는
-	list_remove(&info->child_elem);
-	palloc_free_page(info);
-	return ret;
+    sema_down(&found_info->wait_sema); //잠자기
+    int ret = found_info->exit_status; // 일어나서 유언장 확인
+	//죽은 자식 방 정리
+    list_remove(&found_info->child_elem);
+    palloc_free_page(found_info);
+    
+    return ret;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
@@ -356,33 +351,56 @@ void
 process_exit (void) {
 	struct thread *curr = thread_current (); // 출력
 
-	// FDT 정리
-	if (curr->fd_set != NULL)
-	{		
-		for (int i = 0; i < FDT_SIZE; i++)
-		{
-			if (curr->fd_set[i] != NULL){
-				file_close(curr->fd_set[i]); 
-				curr->fd_set[i] = NULL;
-			}
-		}
-		palloc_free_page(curr->fd_set);
-		curr->fd_set = NULL;
-	}
+    /* 현재 락 보유 여부 확인 */
+    bool lock_held = false;
+    // 락이 초기화되었고, 현재 스레드가 홀더라면 true
+    if (filesys_lock.holder != NULL) {
+        lock_held = lock_held_by_current_thread(&filesys_lock);
+    }
+
+    /*  안 잡고 있을 때만 락 획득 (데드락 방지) */
+    if (!lock_held) {
+        lock_acquire(&filesys_lock);
+    }
+
+    // FDT 정리
+    if (curr->fd_set != NULL) {      
+        for (int i = 0; i < FDT_SIZE; i++) {
+            if (curr->fd_set[i] != NULL) {
+                file_close(curr->fd_set[i]);
+                curr->fd_set[i] = NULL;
+            }
+        }
+        palloc_free_page(curr->fd_set);
+        curr->fd_set = NULL;
+    }
+    
+    // 실행 파일 닫기
+    if (curr->running_file != NULL) {
+        file_close(curr->running_file);
+        curr->running_file = NULL;
+    }
+
+	lock_release(&filesys_lock);
 	
 	// 실행 중인 파일 닫기 -> 쓰기 상태 해제
 	if (curr->running_file != NULL) {
+		lock_acquire(&filesys_lock);
 		file_close(curr->running_file);
+		lock_release(&filesys_lock);
 		curr->running_file = NULL;
     }
 
 	// 로그 출력
-	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
+	// if (curr->pml4 != NULL)
+	// {
+	// 	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);	
+	// }
+	
 
 	// 유언 남기기
 	if (curr->st_child_info != NULL){
 		curr->st_child_info->exit_status = curr->exit_status; // 유언
-		// printf("%d", curr -> st_child_info -> exit_status);
 		sema_up(&curr->st_child_info->wait_sema); // 부모 깨우기 -> process_wait 하고 있는 부모 깨우기
 	}
 
@@ -531,14 +549,19 @@ load (const char *fn, struct intr_frame *if_) {
 	file_name = argv_token[0];
 	//////////////////////////Implement argument passing////////////////////////////
 	/* Open executable file. */
+	lock_acquire(&filesys_lock);
 	file = filesys_open (file_name);
+	lock_release(&filesys_lock);
+
 	if (file == NULL) {
 		printf ("load: %s: open failed\n", file_name);
 		goto done;
 	}
 	// 열었는 파일 등록과 쓰기 부정
 	t->running_file = file;
+	lock_acquire(&filesys_lock);
     file_deny_write(file); // 이 파일은 프로세스 종료 전까지 수정 불가
+	lock_release(&filesys_lock);
 
 	/* We first kill the current context */
 	process_cleanup ();
@@ -550,6 +573,7 @@ load (const char *fn, struct intr_frame *if_) {
 
 
 	/* Read and verify executable header. */
+	lock_acquire(&filesys_lock);
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7)
 			|| ehdr.e_type != 2
@@ -557,21 +581,34 @@ load (const char *fn, struct intr_frame *if_) {
 			|| ehdr.e_version != 1
 			|| ehdr.e_phentsize != sizeof (struct Phdr)
 			|| ehdr.e_phnum > 1024) {
+		lock_release(&filesys_lock);
 		printf ("load: %s: error loading executable\n", file_name);
 		goto done;
 	}
+	lock_release(&filesys_lock);
 
 	/* Read program headers. */
 	file_ofs = ehdr.e_phoff;
 	for (i = 0; i < ehdr.e_phnum; i++) {
 		struct Phdr phdr;
-
-		if (file_ofs < 0 || file_ofs > file_length (file))
+		lock_acquire(&filesys_lock);
+		if (file_ofs < 0 || file_ofs > file_length (file)){
+			lock_release(&filesys_lock);
 			goto done;
+		}
+		lock_release(&filesys_lock);
+
+		lock_acquire(&filesys_lock);
 		file_seek (file, file_ofs);
+		lock_release(&filesys_lock);
 
-		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr)
+		lock_acquire(&filesys_lock);
+		if (file_read (file, &phdr, sizeof phdr) != sizeof phdr){
+			lock_release(&filesys_lock);
 			goto done;
+		}
+		lock_release(&filesys_lock);
+
 		file_ofs += sizeof phdr;
 		switch (phdr.p_type) {
 			case PT_NULL:
@@ -604,9 +641,13 @@ load (const char *fn, struct intr_frame *if_) {
 						read_bytes = 0;
 						zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
 					}
+					lock_acquire(&filesys_lock);
 					if (!load_segment (file, file_page, (void *) mem_page,
-								read_bytes, zero_bytes, writable))
+								read_bytes, zero_bytes, writable)){
+						lock_release(&filesys_lock);
 						goto done;
+					}
+					lock_release(&filesys_lock);
 				}
 				else
 					goto done;
@@ -664,7 +705,9 @@ done:
         palloc_free_page(page_for_argv);
 
 	if (!success) {
+		lock_acquire(&filesys_lock);
         file_close (file);
+		lock_release(&filesys_lock);
     }
 	return success;
 }

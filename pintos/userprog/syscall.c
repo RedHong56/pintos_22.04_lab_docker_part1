@@ -48,12 +48,12 @@ void sys_close (int fd);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
-struct lock sys_lock;
+struct lock filesys_lock;
 
 void
 syscall_init (void) {
 
-	lock_init(&sys_lock);
+	lock_init(&filesys_lock);
 
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
 			((uint64_t)SEL_KCSEG) << 32);
@@ -75,8 +75,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	switch (syscall_num)
 	{
 	case SYS_EXIT:
-		sys_exit(f->R.rdi);
-		break;
+			sys_exit(f->R.rdi);
+			break;
 
 	case SYS_HALT:{
 		sys_halt();
@@ -136,15 +136,25 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	}	
 	case SYS_WAIT:{
 		pid_t pid = f->R.rdi;
-		f->R.rax = sys_wait(thread_name); 
+		f->R.rax = sys_wait(pid);
 		break;
 	}
-	// case SYS_SEEK:
-	// 	sys_seek();
-	// 	break;
-	// case SYS_TELL:
-	// 	sys_tell();
-	// 	break;
+	case SYS_SEEK:{
+		int fd = f->R.rdi;
+		unsigned position = f->R.rsi;
+		sys_seek(fd, position);
+		break;
+	}	
+	case SYS_REMOVE:{
+		char *file_name = (const char *)f->R.rdi;
+		f->R.rax = sys_remove(file_name);
+		break;
+	}
+	case SYS_TELL:{
+		int fd = f->R.rdi;
+		f->R.rax = sys_tell(fd);
+		break;
+	}
 	default:
 		break;
 	}
@@ -178,7 +188,9 @@ void check_valid_string(const char *str) {
 
 /////////////////////////////////////EXIT////////////////////////////////////////////
 void sys_exit (int status){ //이거 중복 선언임
-	thread_current()->exit_status = status;
+	struct thread *curr = thread_current();
+	curr->exit_status = status;
+	printf ("%s: exit(%d)\n", thread_name(), curr->exit_status);
 	thread_exit();
 }
 
@@ -203,9 +215,9 @@ int sys_write (int fd, const void *buffer, unsigned length){
 	if (file_name == NULL)
 		return -1;
 
-	lock_acquire(&sys_lock);
+	lock_acquire(&filesys_lock);
 	int ret_length = file_write(file_name, buffer, length);
-	lock_release(&sys_lock);
+	lock_release(&filesys_lock);
 
 	return ret_length;
 }
@@ -219,9 +231,9 @@ bool sys_create (const char *file, unsigned initial_size){
 	check_address(file);
 	check_valid_string(file);
 
-	lock_acquire(&sys_lock);
+	lock_acquire(&filesys_lock);
 	bool success = filesys_create(file, initial_size); //Inode(명세서)와 Data Block(데이터 공간)할당
-	lock_release(&sys_lock);
+	lock_release(&filesys_lock);
 	return success; 
 }
 /////////////////////////////////////OPEN////////////////////////////////////////////
@@ -235,9 +247,9 @@ int sys_open (const char *file){
 	
 	struct thread *t = thread_current();
 
-	lock_acquire(&sys_lock);
+	lock_acquire(&filesys_lock);
 	struct file *file_st = filesys_open(file); // file 이름에 맞는 inode를 dir에서 찾아줌
-	lock_release(&sys_lock);
+	lock_release(&filesys_lock);
 	if (file_st == NULL) // 만약 파일이 존재하지않으면
 		return -1;
 
@@ -262,9 +274,9 @@ void sys_close (int fd){
 	if (close_fd == NULL){ // 이게 kick 임
 		return;
 	}
-	lock_acquire(&sys_lock);
+	lock_acquire(&filesys_lock);
 	file_close(close_fd);
-	lock_release(&sys_lock);
+	lock_release(&filesys_lock);
 
 	thread_current()->fd_set[fd] = NULL;
 }
@@ -275,7 +287,7 @@ int sys_read (int fd, void *buffer, unsigned length){
 	
 	check_address(buffer); // 주소확인하고
 	if(length >0)
-		check_address(buffer + length -1); // 끝 주소 확인
+		check_address(buffer + length -1); // 끝 주소 확인 
 	
 	if (fd == 0){ //keybord 입력 값 읽기
 		uint8_t *buf = (uint8_t *)buffer;
@@ -293,9 +305,9 @@ int sys_read (int fd, void *buffer, unsigned length){
 	if (read_file_name == NULL)
 		return -1;
 
-	lock_acquire(&sys_lock);
+	lock_acquire(&filesys_lock);
 	int buf_length = file_read(read_file_name, buffer, length);
-	lock_release(&sys_lock);
+	lock_release(&filesys_lock);
 
 	return buf_length;
 }
@@ -308,7 +320,9 @@ int sys_filesize (int fd){
 	if (file_name == NULL)
 		return -1;
 
+	lock_acquire(&filesys_lock);
 	int file_size = file_length(file_name); // 이거 수정
+	lock_release(&filesys_lock);
 	return file_size;
 }
 ///////////////////////////////////FORK//////////////////////////////////////////////
@@ -341,7 +355,7 @@ int sys_exec (const char *file){
 		return -1;
 	}
 	if (process_exec(file_name) == -1) // process_exec 호출 후 free
-		return -1;
+		sys_exit(-1);
 
 	NOT_REACHED();
 }
@@ -349,11 +363,55 @@ int sys_exec (const char *file){
 int sys_wait (pid_t pid){
 	int child_pid;
 	child_pid = process_wait(pid);
+	
 	return child_pid;
 }
 
+void sys_seek (int fd, unsigned position){
 
-// bool sys_remove (const char *file);
-// void sys_seek (int fd, unsigned position);
-// unsigned sys_tell (int fd);
+	struct thread *curr = thread_current();
+    // fd 확인
+    if (fd < 2 || fd >= FDT_SIZE) {
+        return;
+    }
 
+    // 파일 객체 가져오기
+    struct file *file = curr->fd_set[fd];
+    
+    // 파일이 존재하면 오프셋 이동
+    if (file != NULL) {
+		lock_acquire(&filesys_lock);
+        file_seek(file, position);
+		lock_release(&filesys_lock);
+    }
+}
+
+bool sys_remove (const char *file){
+	check_address(file);
+	
+	bool success = false;
+
+	lock_acquire(&filesys_lock);
+	success = filesys_remove(file);
+	lock_release(&filesys_lock);
+
+	return success;
+}
+unsigned sys_tell (int fd){
+
+	struct thread *curr = thread_current();
+    // fd 확인
+    if (fd < 2 || fd >= FDT_SIZE) {
+        return;
+    }
+	// 파일 객체 가져오기
+    struct file *file = curr->fd_set[fd];
+
+	unsigned off =NULL;
+
+	lock_acquire(&filesys_lock);
+	off = file_tell(file);
+	lock_release(&filesys_lock);
+
+	return off; 
+}
