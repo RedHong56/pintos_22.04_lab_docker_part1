@@ -8,6 +8,7 @@ struct file {
 	struct inode *inode;        /* File's inode. */
 	off_t pos;                  /* Current position. */
 	bool deny_write;        /* Has file_deny_write() been called? */
+	int dup_count; // dup2 접근 카운트
 };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -20,6 +21,7 @@ file_open (struct inode *inode) {
 		file->inode = inode;
 		file->pos = 0;
 		file->deny_write = false;
+		file->dup_count  = 1;
 		return file;
 	} else {
 		inode_close (inode);
@@ -51,13 +53,18 @@ file_duplicate (struct file *file) {
 /* Closes FILE. */
 void
 file_close (struct file *file) {
-	if (file != NULL) {
-		file_allow_write (file);
-		inode_close (file->inode);
-		free (file);
-	}
-}
+    if (file != NULL) {
+        // 카운트 감소
+        file->dup_count--;
 
+        // 카운트가 0 이하일 때 메모리 해제
+        if (file->dup_count <= 0) {
+            file_allow_write (file);
+            inode_close (file->inode);
+            free (file);
+        }
+    }
+}
 /* Returns the inode encapsulated by FILE. */
 struct inode *
 file_get_inode (struct file *file) {
@@ -158,4 +165,14 @@ off_t
 file_tell (struct file *file) {
 	ASSERT (file != NULL);
 	return file->pos;
+}
+
+struct file 
+*file_dup_increate (struct file *file){
+    if (file == NULL) {
+        return NULL;
+    }
+    file->dup_count++; 
+    
+    return file;
 }

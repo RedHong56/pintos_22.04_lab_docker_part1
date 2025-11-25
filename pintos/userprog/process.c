@@ -31,6 +31,8 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+
+
 // initd 구조체 
 struct initd_args {
     char *file_name;
@@ -225,7 +227,7 @@ __do_fork (void *aux) {
 	bool succ = true;
 	// info 연결
 	current->st_child_info = info;
-
+	
 	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) *
 	// fork 이전의 부모 레지스터 값 저장 해야함 , 쓰레드 구조체 안에 */
 
@@ -253,14 +255,7 @@ __do_fork (void *aux) {
 		struct file *parent_file = parent->fd_set[i];
 		if (parent_file != NULL)
 		{
-			struct file *child_file = file_duplicate(parent_file);
-			if (child_file != NULL){
-				current->fd_set[i] = child_file;
-			}else{
-				current->fd_set[i] = NULL;
-			}
-		}else{
-			current->fd_set[i] = NULL;
+			current->fd_set[i] = file_dup_increate(parent_file);
 		}
 	}
 

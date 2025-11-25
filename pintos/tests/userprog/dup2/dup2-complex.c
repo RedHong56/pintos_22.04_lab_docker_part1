@@ -47,7 +47,7 @@ main (int argc UNUSED, char *argv[] UNUSED) {
 
   dup2 (dup2 (fd3, fd3), dup2 (fd1, fd2));
   seek (fd2, tell (fd1));
-  
+
   byte_cnt += read (fd2, buffer + byte_cnt, 17 + 2 * dup2 (fd4, fd1));
 
   close (fd1);
@@ -72,7 +72,7 @@ main (int argc UNUSED, char *argv[] UNUSED) {
   fd6 = open ("up");
 
   dup2 (fd6, 1);
-
+  
   msg ("%d", byte_cnt);
   snprintf (magic, sizeof magic, "%d", byte_cnt);
   write (fd4, magic, strlen (magic));

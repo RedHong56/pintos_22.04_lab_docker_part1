@@ -48,6 +48,11 @@ void sys_close (int fd);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+
+// dup 시 I/O 분류
+#define STDIN  ((struct file *) 1)
+#define STDOUT ((struct file *) 2)
+
 struct lock filesys_lock;
 
 void
@@ -155,6 +160,12 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = sys_tell(fd);
 		break;
 	}
+	case SYS_DUP2:{
+		int oldfd = f->R.rdi;
+		int newfd = f->R.rsi;
+		f->R.rax = dup2(oldfd, newfd);
+		break;
+	}
 	default:
 		break;
 	}
@@ -196,30 +207,28 @@ void sys_exit (int status){ //이거 중복 선언임
 
 /////////////////////////////////////WRITE////////////////////////////////////////////
 int sys_write (int fd, const void *buffer, unsigned length){
+    check_address(buffer);
 
-	check_address(buffer);
+    if (fd < 0 || fd >= FDT_SIZE) return -1;
 
-	if (fd<1 || fd > 63)
-		return -1;
-	
-	if (fd == 1){
-		if (buffer !=NULL)
-		{
-			putbuf(buffer, length);
-			return length;
-		}
-		return -1;
-	}
+    struct thread *curr = thread_current();
+    struct file *f = curr->fd_set[fd];
 
-	struct file *file_name = thread_current()->fd_set[fd];
-	if (file_name == NULL)
-		return -1;
+    if (f == STDOUT || (fd == 1 && f == NULL)) {
+        putbuf(buffer, length);
+        return length;
+    }
 
-	lock_acquire(&filesys_lock);
-	int ret_length = file_write(file_name, buffer, length);
-	lock_release(&filesys_lock);
+    if (fd == 0 || f == STDIN) return 0;
 
-	return ret_length;
+    if (f != NULL) {
+        lock_acquire(&filesys_lock);
+        int ret = file_write(f, buffer, length);
+        lock_release(&filesys_lock);
+        return ret;
+    }
+
+    return -1;
 }
 /////////////////////////////////////HALT////////////////////////////////////////////
 void sys_halt (void){
@@ -241,7 +250,7 @@ int sys_open (const char *file){
 
 	check_address(file);
 
-	if (*file == ""){ // empty 
+	if (file == NULL || *file == '\0'){
 		return -1;
 	}
 	
@@ -266,8 +275,8 @@ int sys_open (const char *file){
 
 /////////////////////////////////////CLOSE////////////////////////////////////////////
 void sys_close (int fd){
-	if (fd<2 || 63<fd){
-		sys_exit(-1);
+	if (fd < 0 || fd >= FDT_SIZE) {
+		return; 
 	}
 	struct file *close_fd = thread_current()->fd_set[fd];
 
@@ -282,38 +291,43 @@ void sys_close (int fd){
 }
 //////////////////////////////////////READ///////////////////////////////////////////////
 int sys_read (int fd, void *buffer, unsigned length){
-	if( fd<0 || fd > 63 || fd == 1 || buffer == NULL)
+	// 유효성 검사
+	if( fd<0 || fd > FDT_SIZE -1 || fd == 1 || buffer == NULL)
 		return -1;
-	
 	check_address(buffer); // 주소확인하고
 	if(length >0)
 		check_address(buffer + length -1); // 끝 주소 확인 
 	
-	if (fd == 0){ //keybord 입력 값 읽기
+	struct thread *curr = thread_current();
+    struct file *f = curr->fd_set[fd];
+	
+	if (fd == 0 || f == STDIN){ //keybord 입력 값 읽기
 		uint8_t *buf = (uint8_t *)buffer;
 		
 		for (unsigned i = 0; i < length; i++){
-			buf[i] = input_getc();
-
-			if (buf[i] == NULL)
-				return i+1;
+			char c = input_getc();
+            buf[i] = c;
+            if (c == '\0')
+                return i;
 		}
 		return length;
 	}
+	// stdin 인 경우
+	if (fd == 1 || f == STDOUT) {
+        return -1;
+    }
+	if (f == NULL) return -1; // 닫힌 파일
 
-	struct file *read_file_name = thread_current()->fd_set[fd];
-	if (read_file_name == NULL)
-		return -1;
 
 	lock_acquire(&filesys_lock);
-	int buf_length = file_read(read_file_name, buffer, length);
+	int buf_length = file_read(f, buffer, length);
 	lock_release(&filesys_lock);
 
 	return buf_length;
 }
 //////////////////////////////////////FILE SIZE/////////////////////////////////////////////
 int sys_filesize (int fd){
-	if (fd< 1 || 63 < fd)
+	if (fd< 1 || FDT_SIZE-1 < fd)
 		return -1;
 	
 	struct file *file_name = thread_current()->fd_set[fd];
@@ -371,13 +385,19 @@ void sys_seek (int fd, unsigned position){
 
 	struct thread *curr = thread_current();
     // fd 확인
-    if (fd < 2 || fd >= FDT_SIZE) {
+    if (fd < 0 || fd >= FDT_SIZE) {
         return;
     }
 
     // 파일 객체 가져오기
     struct file *file = curr->fd_set[fd];
+	if (file == NULL) {
+        return;
+    }
     
+	if (file == STDIN || file == STDOUT) {
+        return; 
+    }
     // 파일이 존재하면 오프셋 이동
     if (file != NULL) {
 		lock_acquire(&filesys_lock);
@@ -414,4 +434,50 @@ unsigned sys_tell (int fd){
 	lock_release(&filesys_lock);
 
 	return off; 
+}
+////////////////////////////////////////////////////////////////
+int dup2(int oldfd, int newfd) {
+    struct thread *curr = thread_current();
+
+    // newfd < 2 제한 삭제! (0, 1번도 dup2 대상이 될 수 있음)
+    if (oldfd < 0 || oldfd >= FDT_SIZE || newfd < 0 || newfd >= FDT_SIZE) {
+        return -1;
+    }
+
+    // Self-dup Check
+    if (oldfd == newfd) return newfd;
+
+    // old_file 결정 로직 순서 변경
+    struct file *old_file = NULL;
+
+    if (oldfd == 0) {
+        old_file = STDIN; 
+    } else if (oldfd == 1) {
+        old_file = STDOUT;
+    } else {
+        // 0, 1이 아닐 때만 FDT에서 가져옴
+        old_file = curr->fd_set[oldfd];
+    }
+
+    // 0, 1도 아니고 FDT에도 없으면 진짜 에러
+    if (old_file == NULL) {
+        return -1;
+    }
+
+    // --- 여기부터는 기존 로직과 동일 ---
+
+    // newfd 닫기 (Dummy 제외)
+    struct file *new_file = curr->fd_set[newfd];
+    if (new_file != NULL && new_file != STDIN && new_file != STDOUT) {
+        file_close(new_file);
+    }
+
+    // 복제 (Dummy는 값만 복사, 일반 파일은 카운트 증가)
+    if (old_file == STDIN || old_file == STDOUT) {
+        curr->fd_set[newfd] = old_file;
+    } else {
+        curr->fd_set[newfd] = file_dup_increate(old_file);
+    }
+
+    return newfd;
 }

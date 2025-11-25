@@ -32,7 +32,7 @@ typedef int tid_t;
 #define PRI_MAX 63	   /* Highest priority. */
 
 
-#define FDT_SIZE 128 // 동적 할당
+#define FDT_SIZE 512 // 동적 할당
 /* A kernel thread or user process.
  *
  * Each thread structure is stored in its own 4 kB page.  The

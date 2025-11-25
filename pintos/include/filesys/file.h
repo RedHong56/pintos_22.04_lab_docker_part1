@@ -11,6 +11,9 @@ struct file *file_duplicate (struct file *file);
 void file_close (struct file *);
 struct inode *file_get_inode (struct file *);
 
+struct file *file_dup_increate (struct file *file);
+
+
 /* Reading and writing. */
 off_t file_read (struct file *, void *, off_t);
 off_t file_read_at (struct file *, void *, off_t size, off_t start);
