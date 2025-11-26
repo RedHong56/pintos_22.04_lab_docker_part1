@@ -205,7 +205,8 @@ tid_t thread_create(const char *name, int priority,
 		palloc_free_page(t); // 실패하면 스레드 메모리도 반납
 		return TID_ERROR;
 	}
-
+	t->fd_set[0] = (struct file *) 0x1; // 0번 칸에 0x1 주소 넣기
+	t->fd_set[1] = (struct file *) 0x2;// 0번 칸에 0x2 주소 넣기
 
 	/* Call the kernel_thread if it scheduled.
 	 * Note) rdi is 1st argument, and rsi is 2nd argument. */

@@ -247,22 +247,23 @@ __do_fork (void *aux) {
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
 #endif
-
-	// File Object duplicate 
-	for(int i = 0; i< FDT_SIZE; i++){
-		struct file *parent_file = parent->fd_set[i];
-		if (parent_file != NULL)
-		{
+	// FD copy
+	for (int i = 0; i < FDT_SIZE; i++) {
+    	struct file *parent_file = parent->fd_set[i];
+    
+   	 	if (parent_file != NULL) {
 			struct file *child_file = file_duplicate(parent_file);
-			if (child_file != NULL){
+			
+			if (child_file != NULL) {
 				current->fd_set[i] = child_file;
-			}else{
-				current->fd_set[i] = NULL;
+			} else {
+				// 복사 실패 시 (메모리 부족 등) 처리. 보통 NULL 채움
+				current->fd_set[i] = NULL; 
 			}
-		}else{
-			current->fd_set[i] = NULL;
-		}
-	}
+    } else {
+        current->fd_set[i] = NULL;
+    }
+}
 
 	/* TODO : parent는 이 함수가 성공적으로 복제될 때까지 fork()에서 반환해서는 안 됩니다 */
 	// * TODO: parent의 리소스를 반환해야 합니다.*/
@@ -517,8 +518,6 @@ load (const char *fn, struct intr_frame *if_) {
 	off_t file_ofs;
 	bool success = false;
 	int i;
-	// char *argv_token[64]; //문자열 복사 하는 곳
-	// char *argv_addr[64]; // word DATA PUSH
 
 	//힙에서 4KB 페이지
 	uint64_t *page_for_argv = palloc_get_page(PAL_ZERO);
@@ -526,7 +525,7 @@ load (const char *fn, struct intr_frame *if_) {
 
 	// 그 페이지를 쪼개서 씁니다. (캐스팅 활용)
 	char **argv_token = (char **) page_for_argv;
-	char **argv_addr = (char **) (page_for_argv + FDT_SIZE); // 128칸 뒤부터 사용
+	char **argv_addr = (char **) (page_for_argv + 128); // 128칸 뒤부터 사용
 
 	//////////////////////////Implement argument passing////////////////////////////
 	char fn_copy[64], *file_name;

@@ -8,6 +8,7 @@ struct file {
 	struct inode *inode;        /* File's inode. */
 	off_t pos;                  /* Current position. */
 	bool deny_write;        /* Has file_deny_write() been called? */
+	int dup2_count;
 };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -20,6 +21,7 @@ file_open (struct inode *inode) {
 		file->inode = inode;
 		file->pos = 0;
 		file->deny_write = false;
+		file->dup2_count = 1;
 		return file;
 	} else {
 		inode_close (inode);
@@ -39,19 +41,39 @@ file_reopen (struct file *file) {
  * same inode as FILE. Returns a null pointer if unsuccessful. */
 struct file *
 file_duplicate (struct file *file) {
+	if (file == NULL){
+		return NULL;
+	}
+	
+	if (file == (struct file *) 0x1 || file == (struct file *) 0x2) {
+        return file;
+	}
 	struct file *nfile = file_open (inode_reopen (file->inode));
 	if (nfile) {
 		nfile->pos = file->pos;
 		if (file->deny_write)
 			file_deny_write (nfile);
+		// dup_count 초기화
+		// nfile->dup2_count = 1;
 	}
 	return nfile;
 }
 
 /* Closes FILE. */
 void
-file_close (struct file *file) {
-	if (file != NULL) {
+file_close (struct file *file){
+	// 매직 포인터면 아무것도 안 하고 리턴 (또는 NULL 처리만)
+	if (file == NULL){
+		return;
+	}
+	
+    if (( file == (struct file *) 0x1) || (file == (struct file *) 0x2)) {
+		file = NULL;
+        return; 
+    }	
+	file->dup2_count--; // 사용하고있으니 감소
+	
+	if (file->dup2_count <=0){ // 복제 수 보다 더 close 하면
 		file_allow_write (file);
 		inode_close (file->inode);
 		free (file);
@@ -158,4 +180,18 @@ off_t
 file_tell (struct file *file) {
 	ASSERT (file != NULL);
 	return file->pos;
+}
+
+struct file *file_dup2(struct file *file_in){
+	
+	struct file *file = file_in;
+	if (file == NULL)
+		return NULL;
+
+	if (file ==(struct file *) 0x1|| file == (struct file *) 0x2){
+		return file;
+	}
+
+	file->dup2_count++;
+	return file;
 }

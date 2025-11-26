@@ -10,6 +10,7 @@ struct file *file_reopen (struct file *);
 struct file *file_duplicate (struct file *file);
 void file_close (struct file *);
 struct inode *file_get_inode (struct file *);
+struct file *file_dup2(struct file *file);
 
 /* Reading and writing. */
 off_t file_read (struct file *, void *, off_t);
@@ -25,6 +26,9 @@ void file_allow_write (struct file *);
 void file_seek (struct file *, off_t);
 off_t file_tell (struct file *);
 off_t file_length (struct file *);
+
+
+
 
 
 #endif /* filesys/file.h */

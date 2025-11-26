@@ -423,6 +423,7 @@ bool sys_remove (const char *file){
 	return success;
 }
 unsigned sys_tell (int fd){
+
 	struct thread *curr = thread_current();
     // fd 유효성 검사
     if (fd < 0 || fd >= FDT_SIZE) {
